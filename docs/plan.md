@@ -157,11 +157,9 @@ The B2B dashboard is where restaurants get value in exchange for partner status.
 
 5. **Menu Performance** — Per-item analytics driven primarily by receipt OCR feedback (§3.3). For each menu item: impression count (from consumer recommendation sessions), order rate (from receipts), thumbs-up rate, thumbs-down rate, sentiment trajectory over time. Sortable table with an inline sparkline per row. Items with mixed feedback surface a "what customers said" preview when expanded.
 
-6. **Customer Insights** — Anonymized persona segments: _"Your typical Tuesday diner is a group of 4 in the 'with the boys' context, average $35/head, most-liked items: birria tacos and mezcal margaritas."_ Personas are clustered from `bookings` + `group_members` + `item_feedback`.
+6. **Ad Campaign Studio** — Creative generation workspace (Multimodal track bait). Prompt box + optional reference image upload → Bedrock image gen → generated Instagram-ready carousel (3 variants) + generated caption + suggested hashtags + "what this'd look like in the feed" preview. Short video variant renders via Remotion + Polly voiceover. Saved campaigns go to `ad_campaigns`; assets land in S3 and serve through CloudFront.
 
-7. **Ad Campaign Studio** — Creative generation workspace (Multimodal track bait). Prompt box + optional reference image upload → Bedrock image gen → generated Instagram-ready carousel (3 variants) + generated caption + suggested hashtags + "what this'd look like in the feed" preview. Short video variant renders via Remotion + Polly voiceover. Saved campaigns go to `ad_campaigns`; assets land in S3 and serve through CloudFront.
-
-8. **Trend Radar** — City-level and neighborhood-level food trends aggregated from consumer recommendation sessions and voice-agent intent extraction. _"'Birria' is up 40% in search intent this month in East Austin."_ Read-only for MVP; valuable content for the restaurant marketing story.
+7. **Trend Radar** — City-level and neighborhood-level food trends aggregated from consumer recommendation sessions and voice-agent intent extraction. _"'Birria' is up 40% in search intent this month in East Austin."_ Read-only for MVP; valuable content for the restaurant marketing story.
 
 ### 4.2 "Just ask Crave!" — Chatbot data sources and architecture
 
