@@ -19,7 +19,7 @@ For a 24-hour hackathon, we are **not** building a production booking system, a 
 
 ## 2. What We're Building
 
-Five features make the MVP. Everything else is either cut or parked (see §13).
+Six features make the MVP. Everything else is either cut or parked (see §12).
 
 1. **Conversational voice agent** — the headline moment. User says "I'm going out with the boys tonight," the agent resolves the group from contacts, reconciles preferences, and speaks back the top 3 recommendations with reasoning.
 
@@ -35,7 +35,7 @@ Five features make the MVP. Everything else is either cut or parked (see §13).
 
 **Supporting UX (not features, but required for the six above to work):**
 
-- Phone-OTP onboarding with 5–6 cuisine swipe cards to seed the preference vector.
+- Phone-OTP onboarding, then **required (pick one):** **Talk to a voice agent** and say what you like, **or** **Select foods you like** from a curated list. **Both paths must produce the same artifact:** a **1536-d** Bedrock Titan text embedding written to `users.pref_embedding` (and optionally `user_pref_updates` with `source='onboarding'` per [docs/supabase.md](docs/supabase.md)). Optional UI affordances such as “connect socials” or “upload past orders” are **not** in the hackathon MVP (see §12).
 - Group creation from device contacts; SMS invite for non-CRAVE contacts with a stripped-down web onboarding page.
 - A single restaurant detail screen. For non-partners: name, photos, reasoning, a book CTA. For partners: includes visual menu browsing with an active background voice agent overlay so users can order naturally.
 - **Booking flow** splits on partner status:
@@ -59,22 +59,25 @@ Five features make the MVP. Everything else is either cut or parked (see §13).
 | **Group context tag**                     | "Date night" / "With the boys" / "Family dinner"                           | LLM extracts this from the voice transcript. Each tag has a preset ambiance weight profile.                                          |
 | **Past bookings**                         | Behavioral signal                                                          | Seed fake history for demo users so the group reconciliation has something to blend.                                                 |
 | **User location**                         | Distance fairness                                                          | Device GPS → Supabase.                                                                                                               |
-| **Restaurant menu descriptions + photos** | Embeddings for multimodal search                                           | Scrape/seed 5–10 menu items per restaurant. Run through OpenAI `text-embedding-3-small` + CLIP (via Replicate) for image embeddings. |
+| **Restaurant menu descriptions + photos** | Embeddings for multimodal search                                           | Scrape/seed 5–10 menu items per restaurant. Generate **text embeddings** with **Amazon Bedrock** (default: **Titan Embeddings G1 – Text**, 1536-dim to match `pgvector` columns) and **image / cross-modal embeddings** with **Bedrock** (default: **Titan Multimodal Embeddings G1**, 1024-dim default to match `image_embedding` columns). Batch through Lambda during seeding. |
+| **Onboarding preference capture**         | Seeds `pref_embedding`                                                   | After phone OTP, user completes **either** voice **or** multi-select foods; both funnel through the **same** Titan text embedding → `pref_embedding` and **`user_pref_updates`** with `source='onboarding'` per [docs/supabase.md](docs/supabase.md). |
 
 ### 3.2 AI model stack
 
 | Layer                                    | Model / Service                                                                                               | Used For                                                                                              | Why this one                                                                                                                                         |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Real-time voice I/O**                  | **ElevenLabs Conversational AI** (primary) _or_ **OpenAI Realtime API** (fallback)                            | Full-duplex voice interaction on the mobile app                                                       | ElevenLabs gives us a configurable agent with tool-calling, natural voice, and low latency. OpenAI Realtime is the backup if ElevenLabs trips us up. |
-| **Reasoning LLM**                        | **Claude Sonnet 4.5** via Anthropic API (primary); **Amazon Bedrock (Claude)** as the AWS-credit-earning path | Intent parsing, group resolution from contact names, tool orchestration, B2B chatbot, ad copywriting  | Claude handles tool use cleanly and is the best at not hallucinating restaurant names. Routing through Bedrock ticks the AWS track box.              |
-| **Text embeddings**                      | **OpenAI `text-embedding-3-small`** (1536-dim)                                                                | Restaurant descriptions, menu items, user preference vectors, cuisine semantics                       | Cheap, fast, plays nicely with pgvector.                                                                                                             |
-| **Image embeddings (multimodal search)** | **OpenAI CLIP** via Replicate _or_ **Amazon Titan Multimodal Embeddings** (Bedrock)                           | "Find me somewhere that looks like this photo" + menu image search + cross-modal restaurant discovery | Titan keeps us in AWS-land for the track. CLIP is a safe fallback.                                                                                   |
-| **Speech-to-text**                       | **Amazon Transcribe** (free tier: 60 min/month) _or_ Deepgram                                                 | When not using a full-duplex voice model, for recorded clips in demo                                  | Free tier plus AWS track credit.                                                                                                                     |
-| **Text-to-speech**                       | **ElevenLabs** (voice quality) _or_ **Amazon Polly** (free tier: 5M chars/month)                              | Agent replies, ad voiceover                                                                           | ElevenLabs for the product voice, Polly for the ad voiceover (saves budget and hits AWS track).                                                      |
-| **Image generation (ads)**               | **Amazon Bedrock: Stable Diffusion 3 / Titan Image Generator** (primary); **OpenAI `gpt-image-1`** (fallback) | Instagram ad creative from a text prompt + brand context                                              | Bedrock earns AWS track points and produces ad-ready stills.                                                                                         |
-| **Video generation (ads)**               | **Remotion** rendering a Ken-Burns animation over 3–4 generated stills + Polly voiceover                      | "Video" ad that renders in ~10 seconds instead of waiting on Sora/Runway                              | Actual text-to-video models are too slow and flaky for a live demo. This fakes the result convincingly and is deterministic.                         |
-| **Vector search**                        | **Supabase pgvector (HNSW index)**                                                                            | Restaurant similarity search, menu item search, user↔restaurant matching                              | Headline Supabase feature. Anchors the Supabase track submission.                                                                                    |
-| **OCR (menu / receipts)**                | **Amazon Bedrock** — **Claude** (multimodal / vision) _or_ **Amazon Nova** multimodal via `Converse` / `InvokeModel` | Core pipeline for receipt-based post-meal feedback (§3.3)                                             | Model reads the receipt image and returns **constrained JSON** (line items, prices, quantities, merchant, tax, total) via prompt + schema / tool use. Consolidates AI on Bedrock with reasoning + image gen for the AWS track. |
+| **Real-time voice I/O**                  | **ElevenLabs Conversational AI**                                                                              | Full-duplex voice on the mobile app (speech-in / speech-out + tool calling)                           | Single vendor for voice; STT and TTS live inside the ElevenLabs conversational product.                                                              |
+| **Reasoning LLM**                        | **Amazon Bedrock — Anthropic Claude** (e.g. Sonnet family; pick one granted model ID in-region)                | Intent parsing, tool orchestration, B2B chatbot, ad copy, re-ranking restaurants                     | One AWS surface for LLM; keeps keys off-device via Lambda.                                                                                            |
+| **Text embeddings**                      | **Amazon Bedrock — Titan Embeddings G1 – Text** (fixed **1536**-dim; model id set in console)                    | Restaurants, menu items, user preference vectors, receipt-line text for matcher stage 3              | Matches existing `vector(1536)` columns in Supabase without a dimension migration.                                                                    |
+| **Image embeddings (multimodal search)** | **Amazon Bedrock — Titan Multimodal Embeddings G1** (default **1024**-dim) _or_ **Amazon Nova Multimodal Embeddings** | Menu/restaurant images, optional “looks like this photo” search                                     | Pick **one** model family for the hackathon; column width must match the model’s output size (1024 default for Titan Multimodal G1).                 |
+| **Text-to-speech (ads / video)**         | **ElevenLabs** (API or batch from Lambda)                                                                     | Voiceover on Remotion-rendered video ads; any non-conversational TTS needs                           | Same voice vendor as the consumer agent; no Polly in stack.                                                                                          |
+| **Image generation (ads)**               | **Amazon Bedrock** (Stable Diffusion 3, Titan Image, or other granted image model)                            | Instagram ad stills from prompt + brand context                                                       | Stays on Bedrock for the AWS track.                                                                                                                    |
+| **Video generation (ads)**               | **Remotion** (Lambda or CI) compositing Ken-Burns over Bedrock-generated stills + **ElevenLabs** narration     | Short “video” ad in ~10 seconds                                                                     | Deterministic, demo-safe; narration is ElevenLabs, not AWS Polly.                                                                                    |
+| **Vector search**                        | **Supabase pgvector (HNSW index)**                                                                            | Restaurant similarity, menu item search, user↔restaurant matching                                   | Headline Supabase feature.                                                                                                                           |
+| **OCR (menu / receipts)**                | **Amazon Bedrock** — **Claude** multimodal vision via `Converse` / `InvokeModel` (pick one model ID and lock it) | Receipt → strict JSON (`ReceiptParse`); same stack as reasoning                                     | No Textract; vision stays on Bedrock.                                                                                                                |
+
+**Bedrock embedding catalog (console):** other listed models — **Titan Text Embeddings V2** (1024 / 512 / 256 output), **Cohere Embed** (English / Multilingual v3, Embed v4 multimodal), **TwelveLabs Marengo**, **Nova Multimodal Embeddings** — are **alternatives only if you intentionally change vector column sizes** in Postgres; they are not parallel runtime paths for the demo.
+
 
 ### 3.3 Bill splitting + post-meal feedback loop (how it feeds the pipeline)
 
@@ -86,14 +89,14 @@ Item attribution from bill splitting is actually a _stronger_ signal than generi
 
 1. **Trigger.** Someone in the group taps "Split the bill" in the app. No push notification needed — the user opens CRAVE because they have an actual problem to solve.
 
-2. **Capture.** Camera opens in a receipt-framed mode → user snaps the receipt → image uploads to S3 under `receipts/{user_id}/{booking_id}.jpg`.
+2. **Capture.** Camera opens in a receipt-framed mode → user snaps the receipt → image uploads to **S3** (via presigned URL from Lambda) under `receipts/{user_id}/{booking_id}.jpg`. Supabase Storage is not used for CRAVE binaries in this build.
 
-3. **OCR.** S3 upload triggers a Lambda (S3 event notification). Lambda loads the receipt image from S3 and calls **Amazon Bedrock** (`Converse` or `InvokeModel`) with a **multimodal model** (Claude with vision or Amazon Nova) — image as a content block plus a short prompt requiring **strict JSON**: line items with `Description`, `Price`, `Quantity`, plus merchant name, subtotal, tax, and total. Raw model output is stored in `receipt_captures.ocr_raw` for auditability.
+3. **OCR.** S3 upload triggers a Lambda (S3 event notification). Lambda loads the receipt image from S3 and calls **Amazon Bedrock** (`Converse` or `InvokeModel`) with **Claude multimodal vision** (one model ID chosen for the hackathon) — image as a content block plus a short prompt requiring **strict JSON**: line items with `Description`, `Price`, `Quantity`, plus merchant name, subtotal, tax, and total. Raw model output is stored in `receipt_captures.ocr_raw` for auditability.
 
 4. **Item matching (runs async while user is in step 5).** A Supabase Edge Function fuzzy-matches each extracted line item against the `menu_items` table for that `restaurant_id`. Three-stage matcher:
    - **Stage 1 — exact match:** case-insensitive string equality on item name.
    - **Stage 2 — trigram similarity** via Postgres `pg_trgm` (`similarity(name, raw_text) > 0.4`). Handles typos and abbreviations.
-   - **Stage 3 — embedding similarity:** cosine distance between the OpenAI embedding of the raw receipt text and each menu item's stored embedding. Handles weird receipt abbreviations like `MARG PZZ` → Margherita Pizza.
+   - **Stage 3 — embedding similarity:** cosine distance between the **Bedrock Titan text embedding** of the raw receipt line and each menu item's stored embedding (same 1536-d pipeline as menu seeding). Handles weird receipt abbreviations like `MARG PZZ` → Margherita Pizza.
 
    Each match records its `match_method` and `match_confidence`. Items that can't be matched still work for the bill split (the receipt gives us the price) — they just don't participate in the preference feedback loop.
 
@@ -113,7 +116,7 @@ Item attribution from bill splitting is actually a _stronger_ signal than generi
                     + 0.15 * mean(liked_menu_item_embeddings)
                     - 0.10 * mean(disliked_menu_item_embeddings) )
      ```
-     This nudges the vector toward what the user actually enjoys, not just what they swiped on during onboarding.
+     This nudges the vector toward what the user actually enjoys, not just what they set during onboarding (voice or food pick).
 
 10. **Restaurant-side benefit.** Aggregated item feedback rolls up into the B2B dashboard's Menu Performance page and is queryable through "Just ask Crave!". Because items are attributed to specific (anonymized) user segments, the restaurant can ask _"which items do 'with the boys' groups love that 'date night' groups don't?"_ and get a real answer.
 
@@ -157,7 +160,7 @@ The B2B dashboard is where restaurants get value in exchange for partner status.
 
 5. **Menu Performance** — Per-item analytics driven primarily by receipt OCR feedback (§3.3). For each menu item: impression count (from consumer recommendation sessions), order rate (from receipts), thumbs-up rate, thumbs-down rate, sentiment trajectory over time. Sortable table with an inline sparkline per row. Items with mixed feedback surface a "what customers said" preview when expanded.
 
-6. **Ad Campaign Studio** — Creative generation workspace (Multimodal track bait). Prompt box + optional reference image upload → Bedrock image gen → generated Instagram-ready carousel (3 variants) + generated caption + suggested hashtags + "what this'd look like in the feed" preview. Short video variant renders via Remotion + Polly voiceover. Saved campaigns go to `ad_campaigns`; assets land in S3 and serve through CloudFront.
+6. **Ad Campaign Studio** — Creative generation workspace (Multimodal track bait). Prompt box + optional reference image upload → Bedrock image gen → generated Instagram-ready carousel (3 variants) + generated caption + suggested hashtags + "what this'd look like in the feed" preview. Short video variant renders via Remotion + **ElevenLabs** narration. Saved campaigns go to `ad_campaigns`; assets land in S3 and serve through CloudFront.
 
 7. **Trend Radar** — City-level and neighborhood-level food trends actively populated by an AI (Claude via Bedrock) that aggregates intelligence from context in our Supabase database about the restaurant. _"'Birria' is up 40% in search intent this month in East Austin."_ Read-only for MVP; valuable content for the restaurant marketing story.
 
@@ -175,7 +178,7 @@ The chatbot is Claude (via Bedrock) with **constrained tool calling**. It does N
 | `impressions` (cross-restaurant)          | Competitive view graph — who customers considered alongside you                        |
 | `bookings` + `group_members` + `contacts` | Customer segments, group compositions, repeat-visit behavior                           |
 | `ad_campaigns` + `ad_assets`              | Your own ad history, generation prompts, asset URLs                                    |
-| AI-aggregated trend intelligence          | Neighborhood cuisine trends, anonymized across all users and populated by AI           |
+| `bookings` / `impressions` (RPCs) + AI summaries | Neighborhood cuisine trends for Trend Radar — anonymized aggregates from base tables via parametrized SQL (no materialized views for the MVP); Claude narrates patterns (e.g. intent shifts by neighborhood). |
 
 **Available tools (LLM picks and parameterizes):**
 
@@ -227,9 +230,8 @@ Supabase is the backbone. Every major feature touches it, which is exactly what 
 | **pgvector extension (HNSW)** | Embeddings for restaurants, menu items, users. Powers semantic search, group recommendation ranking, and the "restaurants like this one" feature.                                    |
 | **Auth (phone OTP)**          | Phone-number login matches the product vision and enables the group SMS invite flow.                                                                                                 |
 | **Realtime**                  | Live group voting — when a group member votes, other members see the count update instantly. Also powers the "your friend just joined the group" notification during SMS onboarding. |
-| **Storage**                   | Restaurant photos, generated ad creative (images + rendered videos), user-uploaded receipts if we get to it.                                                                         |
-| **Edge Functions (Deno)**     | The `resolve_group`, `recommend`, and `generate_ad` functions. Keeps the LLM/tool orchestration close to the data and avoids a separate backend server.                              |
-| **Row-Level Security**        | Restaurant accounts can only see their own analytics. User data is scoped per-user. Demonstrable security story for judges.                                                          |
+| **Edge Functions (Deno)**     | `resolve-group`, `recommend`, **`place-order`** (voice orders → `orders` / `order_items`), **`match-receipt-items`** (Lambda-invoked matcher), optional **`generate-ad`** (persist campaigns after S3 upload). Heavy Bedrock calls stay in Lambda; Edge holds Postgres + JWT validation. |
+| **Row-Level Security**        | B2B users are scoped by **`restaurants.owner_user_id`** (the linked dashboard account). Consumer rows are scoped per-user. Demonstrable security story for judges.                                                                                     |
 
 **Demo-worthy Supabase moment:** Open the Supabase dashboard live during the pitch and show the HNSW index, the realtime group vote firing, and the RLS policies. Judges love this.
 
@@ -239,12 +241,10 @@ Strict rule: **free tier only, or services that have per-request pricing low eno
 
 | AWS service                         | Free tier limit                                           | CRAVE use                                                                                                                                            |
 | ----------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Amazon Bedrock**                  | Pay-as-you-go (not free tier, but ~pennies at demo scale) | Claude for reasoning; **Claude or Nova vision** for receipt/menu images → structured JSON; Titan Multimodal Embeddings; Stable Diffusion / Titan Image Generator for ad images. **This is the headline AWS integration.** Textract is intentionally not used — everything multimodal stays on Bedrock. |
-| **AWS Lambda**                      | 1M requests/month forever free                            | Wrapper functions that proxy Bedrock calls from the mobile app and dashboard. Avoids putting AWS credentials in the client.                          |
+| **Amazon Bedrock**                  | Pay-as-you-go (not free tier, but ~pennies at demo scale) | **Claude** for reasoning, re-rank, and B2B chatbot; **Claude vision** for receipt → JSON; **Titan Embeddings G1 – Text** (1536) + **Titan Multimodal Embeddings G1** (1024) for vectors; **SD3 / Titan Image** for ad stills. **Headline AWS integration.** No Textract — vision stays on Bedrock. |
+| **AWS Lambda**                      | 1M requests/month forever free                            | Proxies **Bedrock**; can call **ElevenLabs** HTTP APIs server-side for batch TTS (e.g. Remotion narration). Bridges mobile → Supabase. No secrets on device. |
 | **Amazon API Gateway**              | 1M requests/month free (12 months)                        | Public endpoint for the Lambdas.                                                                                                                     |
-| **Amazon S3**                       | 5 GB free (12 months)                                     | Generated ad creative, menu photos, demo video assets. Served via signed URLs.                                                                       |
-| **Amazon Polly**                    | 5M characters/month free (12 months)                      | Voiceover on generated video ads.                                                                                                                    |
-| **Amazon Transcribe**               | 60 min/month free (12 months)                             | Backup STT path if ElevenLabs flakes.                                                                                                                |
+| **Amazon S3**                       | 5 GB free (12 months)                                     | **All** hackathon binaries: receipts, restaurant/menu photos, generated ad stills, rendered video. URLs (often signed) stored in Postgres; CloudFront in front of public ad paths where configured. |
 | **Amazon CloudFront**               | 1 TB/month free (12 months)                               | CDN in front of S3 for ad creative delivery. Small but demo-realistic.                                                                               |
 | **Amazon Rekognition** _(optional)_ | 5K images/month free (12 months)                          | If we wire up "find restaurants that look like this vibe" from a user-uploaded photo.                                                                |
 
@@ -256,7 +256,7 @@ Strict rule: **free tier only, or services that have per-request pricing low eno
 - **B2B Dashboard:** Next.js 15 + Tailwind + shadcn/ui, deployed to Vercel.
 - **Voice UI:** ElevenLabs Conversational AI SDK in React Native.
 - **Animations (Image Playground-style UI):** Framer Motion + SVG. The "orbit" is a parent SVG with child avatar nodes animated on circular paths, plus a central gradient blur that pulses when the agent is listening.
-- **Video rendering (ads):** Remotion running in a Lambda, outputs MP4 to S3.
+- **Video rendering (ads):** Remotion running in a Lambda, outputs MP4 to S3; narration via **ElevenLabs** (from Lambda), not Polly.
 - **Dev environment:** Single monorepo (pnpm workspaces) — `/apps/mobile`, `/apps/dashboard`, `/apps/api`, `/packages/shared`. GitHub with branch protection off (speed > safety for 24 hours).
 
 ---
@@ -264,33 +264,29 @@ Strict rule: **free tier only, or services that have per-request pricing low eno
 ## 6. Architecture Diagram
 
 ```
-┌──────────────────────────────┐     ┌──────────────────────────────┐
-│   CRAVE Mobile (React Native)│     │  B2B Dashboard (Next.js)     │
-│   + ElevenLabs voice SDK     │     │  + "Ask Crave" chatbot       │
-│   + Image Playground UI      │     │  + Ad Campaign Studio        │
-└──────────────┬───────────────┘     └───────────────┬──────────────┘
-               │                                      │
-               │       HTTPS / WebSocket              │
-               ▼                                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│        API Gateway  →  Lambda (Node.js) orchestration layer      │
-│        (proxies to Bedrock, calls Supabase, signs S3 URLs)       │
-└───────┬───────────────────┬─────────────────────────┬───────────┘
-        │                   │                         │
-        ▼                   ▼                         ▼
-┌──────────────┐   ┌────────────────────┐   ┌────────────────────┐
-│  Supabase    │   │   Amazon Bedrock   │   │       AWS S3       │
-│              │   │                    │   │   + CloudFront     │
-│ • Postgres   │   │ • Claude (reason)  │   │                    │
-│ • pgvector   │   │ • Receipt JSON OCR │   │ • Ad creative      │
-│ • Auth (SMS) │   │ • Titan Multimodal │   │ • Menu photos      │
-│ • Realtime   │   │ • SD3 / Titan Img  │   │ • Rendered videos  │
-│ • Storage    │   └────────────────────┘   └────────────────────┘
-│ • Edge Fns   │   ┌────────────────────┐
-│ • RLS        │   │   ElevenLabs       │   ┌────────────────────┐
-└──────────────┘   │ Conversational AI  │   │    Amazon Polly    │
-                   │ (voice I/O + tools)│   │  (ad voiceover)    │
-                   └────────────────────┘   └────────────────────┘
+┌────────────────────────────────────────────┐     ┌──────────────────────────────┐
+│   CRAVE Mobile (React Native + Expo)       │     │  B2B Dashboard (Next.js)     │
+│   ElevenLabs Conversational AI (voice+tools)│     │  Bedrock via Lambda (chatbot) │
+└──────────────┬─────────────────────────────┘     └───────────────┬──────────────┘
+               │ ElevenLabs cloud                    │ HTTPS
+               │                                     ▼
+               │                     ┌───────────────────────────────────────────────┐
+               │                     │  API Gateway → Lambda (Bedrock + Supabase)   │
+               └────────────────────►│  Tool calls from agent → Edge / Postgres      │
+                                     └───────┬───────────────────┬─────────────────┘
+                                             │                   │
+                                             ▼                   ▼
+                               ┌────────────────────┐   ┌────────────────────┐
+                               │     Supabase       │   │  Amazon Bedrock    │
+                               │ Postgres/pgvector  │   │ Claude + vision    │
+                               │ Auth Realtime Edge │   │ Titan embeddings   │
+                               └────────────────────┘   │ SD3 / Titan image  │
+                                                        └─────────┬──────────┘
+                                                                  │
+                                                                  ▼
+                                                        ┌────────────────────┐
+                                                        │  S3 + CloudFront   │
+                                                        └────────────────────┘
 ```
 
 ---
@@ -305,23 +301,24 @@ CREATE EXTENSION vector;      -- pgvector
 CREATE EXTENSION pg_trgm;     -- trigram similarity for receipt item matching
 CREATE EXTENSION postgis;     -- geospatial queries
 
--- Core tables
-users (id, phone, name, location_geog, pref_embedding vector(1536), created_at,
+-- Core tables (see migrations for exact column names; e.g. display_name not "name")
+users (id, phone, display_name, location_geog, pref_embedding vector(1536), created_at,
        venmo_handle,                 -- optional, for bill-split deep links
        cashapp_handle)               -- optional
-contacts (user_id, contact_user_id, label)
-groups (id, name, owner_id, context_tag, created_at)
+contacts (owner_user_id, contact_user_id, label)
+dining_groups (id, name, owner_id, context_tag, created_at)   -- physical table name; "groups" in product copy
 group_members (group_id, user_id, joined_at)
 restaurants (id, name, cuisine_tags[], price_tier, location_geog, embedding vector(1536),
              image_embedding vector(1024), hours jsonb, photo_urls[], yelp_id, google_place_id,
-             phone_e164, is_crave_partner boolean default false)
-menu_items (id, restaurant_id, name, description, price, image_url,
+             phone_e164, is_crave_partner boolean default false,
+             owner_user_id uuid nullable)   -- B2B dashboard account; RLS scopes analytics to this user
+menu_items (id, restaurant_id, name, description, price_cents, image_url,
             embedding vector(1536), image_embedding vector(1024), is_available boolean default true)
 orders (id, user_id, restaurant_id, status, total_cents, created_at)
 order_items (id, order_id, menu_item_id, quantity, price_cents)
 bookings (id, user_id, group_id, restaurant_id, party_size, scheduled_at, status,
           source text,                  -- 'partner_app' | 'phone_call_logged'
-          voice_transcript, created_at)
+          voice_transcript, dietary_notes, context_tag, created_at)
 dietary_constraints (user_id, constraint_type, hard boolean)
 
 -- Bill splitting + post-meal feedback pipeline
@@ -364,7 +361,7 @@ item_feedback (
 user_pref_updates (
   id, user_id,
   delta_embedding vector(1536),
-  source text,                -- 'bill_split_feedback' | 'booking' | 'swipe'
+  source text,                -- 'bill_split_feedback' | 'booking' | 'onboarding'
   applied boolean,
   created_at
 )
@@ -398,39 +395,22 @@ Six founders, parallel tracks, one hard integration checkpoint at Hour 12 and a 
 | **Hour 2–12: Parallel vertical slices** |                                                                 |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ↳ Voice agent                           | Founder 6 + Founder 3                                           | ElevenLabs agent configured with 4 tools: `resolve_group`, `recommend_restaurants`, `confirm_booking`, `place_order`. Wired into mobile app. Tool calls hit Lambda → Supabase Edge Functions.                                                                                                                                                                                                                                                                                        |
 | ↳ Recommendation engine                 | Founder 3                                                       | Edge Function that takes a group_id + context tag, builds weighted group vector, runs pgvector query, LLM re-ranks top 20 → top 3 with reasons.                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ↳ Mobile app                            | Founder 5 + Founder 2                                           | Onboarding (phone auth + 6 swipe cards), home screen with big voice button, recommendation result screen, group creation from contacts. Plus visual menu screen and voice order confirmation.                                                                                                                                                                                              |
+| ↳ Mobile app                            | Founder 5 + Founder 2                                           | Onboarding (phone auth + required voice **or** food-select path → same embedding), home screen with big voice button, recommendation result screen, group creation from contacts. Plus visual menu screen and voice order confirmation.                                                                                                                                                                                              |
 | ↳ B2B dashboard                         | Founder 4                                                       | Login (restaurant account), home page with "Ask Crave" input, mock analytics charts (real schema, seeded data), campaign studio page skeleton. Menu management CRUD + live orders feed real-time display.                                                                                                                                              |
-| ↳ Ad generation pipeline                | Founder 6 (after voice agent stable)                            | Lambda that takes a prompt + restaurant brand → Bedrock image gen → S3 upload → signed URL back. Video path: generate 4 images, send to Remotion Lambda with Polly voiceover, MP4 to S3.                                                                                                                                                                                                                                                                                                                                                             |
+| ↳ Ad generation pipeline                | Founder 6 (after voice agent stable)                            | Lambda that takes a prompt + restaurant brand → Bedrock image gen → S3 upload → signed URL back. Video path: generate 4 images, Remotion Lambda + **ElevenLabs** narration → MP4 to S3.                                                                                                                                                                                                                                                                                                                                                             |
 | ↳ Receipt OCR + bill split backend      | Founder 4 (after dashboard shell is up, parallel with RLS work) | Camera flow in mobile app → S3 upload → Lambda trigger → **Bedrock vision** receipt parse (structured JSON) → Edge Function item matcher (exact → trigram → embedding) → `receipt_line_items` rows written. Split compute function (subtotal + pro-rata tax + tip). Venmo/CashApp deep-link generator.                                                                                                                                                                                                                                                                        |
 | ↳ Bill split UI + feedback piggyback    | Founder 5 (mobile) + Founder 3 (trigger)                        | Drag-and-drop item-to-avatar UI with live split totals. Tip slider. "Send" button that posts deep links to each member (SMS via Supabase Auth SMS or just in-app modal). After send, quick swipe-rate cards for each user's assigned items. Supabase trigger on `item_feedback` insert recomputes and writes the updated `pref_embedding`.                                                                                                                                                                                                           |
 | ↳ Supabase RLS + realtime               | Founder 4                                                       | RLS policies on all B2B tables. Realtime channel for live bookings feed and group voting.                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| **Hour 12 — INTEGRATION CHECKPOINT**    | All                                                             | Every track demos independently. End-to-end tests: (1) two users log in, create a group, third user says "dinner with the boys" to voice agent, gets 3 recommendations spoken back; (2) restaurant user types "make me an Instagram ad for our margherita pizza" and sees an image appear; (3) user taps "Split the bill," snaps a test receipt, drags items to member avatars, hits Send, confirms a Venmo deep link fires, then sees feedback swipe cards for items they assigned to themselves. Any failing track triggers its fallback (see §9). |
+| **Hour 12 — INTEGRATION CHECKPOINT**    | All                                                             | Every track demos independently. End-to-end tests: (1) two users log in, create a group, third user says "dinner with the boys" to voice agent, gets 3 recommendations spoken back; (2) restaurant user types "make me an Instagram ad for our margherita pizza" and sees an image appear; (3) user taps "Split the bill," snaps a test receipt, drags items to member avatars, hits Send, confirms a Venmo deep link fires, then sees feedback swipe cards for items they assigned to themselves. |
 | **Hour 12–18: Integration + polish**    | All                                                             | Stitch flows. Fix the 20 small bugs that always appear at integration. Wire up the B2B chatbot to actually query Supabase for analytics (simple SQL via LLM tool-calling, read-only).                                                                                                                                                                                                                                                                                                                                                                |
 | **Hour 18–20: Image Playground UI**     | Founder 5                                                       | If and only if voice agent is reliable: build the animated group-builder orbit. SVG + Framer Motion, avatars orbit the central blur, clicking a contact pulls them in with a spring animation. Otherwise, cut.                                                                                                                                                                                                                                                                                                                                       |
 | **Hour 20: FEATURE FREEZE**             | All                                                             | No new features. Only bug fixes, demo data seeding, and rehearsal.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| **Hour 20–23: Demo prep**               | Founder 1 + Founder 5                                           | Record backup demo video of every critical flow (in case live demo fails on-stage Wi-Fi). Devpost writeup. GitHub README with architecture diagram and setup instructions. Pitch deck: 5 slides max — problem, demo, how it works (architecture), tracks hit, ask.                                                                                                                                                                                                                                                                                   |
+| **Hour 20–23: Demo prep**               | Founder 1 + Founder 5                                           | Record a short screen capture of every critical flow for Devpost / README. Devpost writeup. GitHub README with architecture diagram and setup instructions. Pitch deck: 5 slides max — problem, demo, how it works (architecture), tracks hit, ask.                                                                                                                                                                                                                                                                                   |
 | **Hour 23–24: Rehearse**                | All                                                             | Two full pitch runs. Time it. Cut anything that makes the demo >3 minutes. Submit on Devpost with 15 minutes to spare.                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 ---
 
-## 9. Fallbacks for Each Critical Path
-
-| Component                                    | If broken by Hour 12                                                                                                                                                                                  | If broken by Hour 20                                                                                                              |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| **ElevenLabs voice agent**                   | Switch to OpenAI Realtime API (already researched, similar tool-calling API).                                                                                                                         | Pre-record the voice interaction; play it over the demo with the real UI responding.                                              |
-| **Bedrock image gen**                        | Fall back to OpenAI `gpt-image-1`.                                                                                                                                                                    | Use 3–4 pre-generated demo ads loaded from S3; the "generation" is a 2-second spinner + reveal.                                   |
-| **Video ad rendering**                       | Cut video; ship image-only ads for the demo.                                                                                                                                                          | Show a pre-rendered MP4 from S3 instead of rendering live.                                                                        |
-| **Bedrock receipt vision parse**             | Use a pre-parsed JSON blob for the demo receipt (**canonical `ReceiptParse` schema** — same shape the matcher expects, so bill-split + feedback pipeline is unchanged).                              | Same pre-parsed JSON fallback — the split compute, deep links, and embedding update still run live.                               |
-| **Receipt item matching**                    | If embedding-based matching is flaky, ship with just exact + trigram and accept lower recall on weird abbreviations. Unmatched items still work for the bill split; they just skip the feedback card. | Skip matching entirely for unmatched items; the split still works (we have prices), feedback cards only appear for matched items. |
-| **Venmo/CashApp deep links**                 | If one SDK-style URL scheme misbehaves on the demo device, fall back to the other.                                                                                                                    | Copy-paste the link from an in-app modal; the demo still shows the right amounts and notes per person.                            |
-| **Group resolution from voice ("the boys")** | LLM tool-call returns a hardcoded demo group.                                                                                                                                                         | Tap the group on-screen instead of speaking the name.                                                                             |
-| **Realtime group voting**                    | In-app state only, no cross-device sync.                                                                                                                                                              | Demo from a single device, narrate the multi-device experience.                                                                   |
-| **Image Playground UI**                      | Ship the plain contact-list group builder.                                                                                                                                                            | —                                                                                                                                 |
-| **Live Wi-Fi at the venue**                  | Tether off a phone hotspot.                                                                                                                                                                           | Play the pre-recorded backup demo video.                                                                                          |
-
----
-
-## 10. Track Strategy — How We Win Each
+## 9. Track Strategy — How We Win Each
 
 ### Multimodal Search & Generation
 
@@ -439,7 +419,7 @@ The submission explicitly exercises four modalities:
 1. **Voice in** (user speech) → **text** (intent) → **voice out** (agent reply).
 2. **Text query** → **image embedding search** (optional: "find restaurants that look cozy").
 3. **Text prompt** → **image generation** (ad creative).
-4. **Text prompt** → **video generation** (Remotion + Polly voiceover on generated stills).
+4. **Text prompt** → **video generation** (Remotion + ElevenLabs narration on generated stills).
 
 Call this out explicitly in the Devpost writeup as "four modalities, one coherent product."
 
@@ -453,11 +433,11 @@ Show, don't tell. In the demo, open the Supabase dashboard and walk through:
 - Auth handling phone OTP.
 - Edge Functions doing the recommendation orchestration.
 
-This is "using every Supabase primitive for something load-bearing," which is exactly what the track rewards.
+This is "using Postgres + **pgvector** + **Auth** + **Realtime** + **Edge Functions** + **RLS** for load-bearing flows" — Storage is intentionally out of scope because **all binaries live on S3** ([docs/supabase.md](docs/supabase.md) §7).
 
 ### Best Use of AWS
 
-Bedrock is the anchor — Claude reasoning, **Claude/Nova vision** for receipt → structured JSON, Titan multimodal embeddings, SD3 for images. Wrapped by Lambda + API Gateway + S3 + CloudFront + Polly. Explicit AWS architecture diagram on a pitch slide. Cost footprint during the demo is quantifiable (a few dollars in Bedrock calls), which shows we understand production economics.
+Bedrock is the anchor — Claude reasoning, **Claude vision** for receipt → structured JSON, Titan text + Titan multimodal embeddings, SD3 / Titan Image for stills. Wrapped by Lambda + API Gateway + S3 + CloudFront. **ElevenLabs** owns all speech (consumer agent + any ad narration). Explicit architecture diagram on a pitch slide. Cost footprint during the demo is quantifiable (a few dollars in Bedrock + ElevenLabs calls), which shows we understand production economics.
 
 ### Most Startup Ready
 
@@ -465,28 +445,28 @@ This is where the (now slimmed-down) business story matters. Keep it to: problem
 
 ---
 
-## 11. Risks for the 24 Hours
+## 10. Risks for the 24 Hours
 
 | Risk                                                                | Mitigation                                                                                                                         |
 | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| ElevenLabs agent tool-calling behaves differently than docs suggest | Build the OpenAI Realtime fallback path behind the same tool interface from Hour 0. Swap providers at a single config line.        |
-| Bedrock model access not granted in time                            | Request access immediately at Hour 0. Fallback chain: Bedrock → Anthropic direct → OpenAI. All three behind one abstraction layer. |
+| ElevenLabs agent tool-calling differs from docs                     | Lock tool schemas early; integration-test each tool against Lambda → Edge with fixed payloads.                                   |
+| Bedrock model access not granted in time                            | Request **all** needed models in console at Hour 0 (Claude text + vision, Titan embeddings, image gen).                           |
 | pgvector performance on day-one data                                | Non-issue at 200 restaurants. If it somehow matters, the HNSW index builds in <1 second.                                           |
 | Group voice resolution hallucinates group members                   | Constrain the tool-call output to an enum of the user's actual groups. No freeform matching from the LLM.                          |
-| Demo Wi-Fi dies on-stage                                            | Phone hotspot + pre-recorded backup video on laptop.                                                                               |
+| Demo Wi-Fi dies on-stage                                            | Phone hotspot; rehearse with the same network conditions as the venue.                                                             |
 | Everyone tries to integrate at once at Hour 12                      | That's what the integration checkpoint is for. Each track demos its own slice before anyone stitches.                              |
 | We build the Image Playground UI instead of fixing voice bugs       | Hard rule: nobody touches the orbit UI until voice is green.                                                                       |
-| Bedrock vision mis-reads a noisy receipt (folded paper, glare)      | Validate JSON against schema; one retry with a stricter prompt; fall back to pre-parsed demo JSON (§9).                            |
+| Bedrock vision mis-reads a noisy receipt (folded paper, glare)      | Validate JSON against schema; allow **one** automated retry with a stricter system prompt before surfacing an error to the user.    |
 
 ---
 
-## 12. Submission Checklist
+## 11. Submission Checklist
 
 - [ ] Devpost project created with tracks selected: Multimodal Search & Generation, Best Use of Supabase, Best Use of AWS, Most Startup Ready
 - [ ] GitHub repo public, README with architecture diagram + setup steps
 - [ ] Demo video (2–3 min): problem → voice agent demo → bill split + feedback loop → B2B chatbot + ad gen → architecture slide
 - [ ] Live demo setup tested on venue Wi-Fi (or hotspot)
-- [ ] Backup demo video recorded and on a local drive
+- [ ] Screen recording of critical flows saved for Devpost / README
 - [ ] Pitch deck: 5 slides
 - [ ] Supabase project: pgvector enabled, pg_trgm enabled, RLS on, realtime channels configured
 - [ ] AWS: Bedrock model access approved, Lambdas deployed, S3 bucket public-read through CloudFront for demo assets, Bedrock vision OCR tested on a sample receipt (JSON validates against schema)
@@ -494,14 +474,15 @@ This is where the (now slimmed-down) business story matters. Keep it to: problem
 
 ---
 
-## 13. Parking Lot — Ideas We're Not Building Now
+## 12. Parking Lot — Ideas We're Not Building Now
 
 Keeping these here so we don't lose them when we revisit the product post-hackathon. None of these are in scope for the 24 hours.
 
 - **DoorDash / Uber Eats order history import** — no public API, unofficial scraping is brittle and legally iffy. If either ever ships an OAuth history export, the pipeline already designed for receipt OCR drops it in with one field change (`source='doordash'`). Same `item_feedback` writes, same embedding update trigger.
 - **Menu swipe-to-order browsing** — not track-aligned for this hackathon.
 - **Actual outbound voice booking to restaurants** — stubbed in the demo. Real outbound telephony (TwiML/Vonage) is a multi-week engineering effort with restaurant acceptance risk on top. Post-hackathon track, not now.
-- **Google Maps Timeline import** — another preference-seeding source. Nice to have, but onboarding swipes + receipt feedback is enough signal for a demo.
+- **Google Maps Timeline import** — another preference-seeding source. Nice to have, but onboarding preference capture + receipt feedback is enough signal for a demo.
+- **Connect socials / upload past orders (onboarding teasers)** — mockup-only or post-MVP; no extra tables in this hackathon beyond the optional patterns in §12 (e.g. order-history import).
 - **One-tap / "Just Book It" mode** — depends on a mature preference model, which we don't have after 24 hours.
 - **Return visit intelligence** ("last time you had the Wagyu — want it again?") — elegant UX, but needs multiple completed visits per user to be interesting. Post-launch.
 - **Sophisticated recommendation stack** (two-tower retrieval, LightGBM re-ranker, nightly Spark training, Kafka event pipeline, blue-green HNSW swaps) — all cut in favor of pgvector + LLM re-ranking. Revisit when data volume justifies it; until then, simpler is better and faster.
