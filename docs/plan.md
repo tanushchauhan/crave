@@ -510,3 +510,4 @@ Keeping these here so we don't lose them when we revisit the product post-hackat
 - **One-tap / "Just Book It" mode** — depends on a mature preference model, which we don't have after 24 hours.
 - **Return visit intelligence** ("last time you had the Wagyu — want it again?") — elegant UX, but needs multiple completed visits per user to be interesting. Post-launch.
 - **Sophisticated recommendation stack** (two-tower retrieval, LightGBM re-ranker, nightly Spark training, Kafka event pipeline, blue-green HNSW swaps) — all cut in favor of pgvector + LLM re-ranking. Revisit when data volume justifies it; until then, simpler is better and faster.
+
