@@ -73,7 +73,7 @@ Five features make the MVP. Everything else is either cut or parked (see §13).
 | **Image generation (ads)**               | **Amazon Bedrock: Stable Diffusion 3 / Titan Image Generator** (primary); **OpenAI `gpt-image-1`** (fallback) | Instagram ad creative from a text prompt + brand context                                              | Bedrock earns AWS track points and produces ad-ready stills.                                                                                         |
 | **Video generation (ads)**               | **Remotion** rendering a Ken-Burns animation over 3–4 generated stills + Polly voiceover                      | "Video" ad that renders in ~10 seconds instead of waiting on Sora/Runway                              | Actual text-to-video models are too slow and flaky for a live demo. This fakes the result convincingly and is deterministic.                         |
 | **Vector search**                        | **Supabase pgvector (HNSW index)**                                                                            | Restaurant similarity search, menu item search, user↔restaurant matching                              | Headline Supabase feature. Anchors the Supabase track submission.                                                                                    |
-| **OCR (menu / receipts)**                | **Amazon Textract** (`AnalyzeExpense` API, free tier: 1K pages/month)                                         | Core pipeline for receipt-based post-meal feedback (§3.3)                                             | Purpose-built for receipts — returns structured line items, prices, merchant info. Much better than raw OCR + regex.                                 |
+| **OCR (menu / receipts)**                | **Amazon Bedrock** — **Claude** (multimodal / vision) _or_ **Amazon Nova** multimodal via `Converse` / `InvokeModel` | Core pipeline for receipt-based post-meal feedback (§3.3)                                             | Model reads the receipt image and returns **constrained JSON** (line items, prices, quantities, merchant, tax, total) via prompt + schema / tool use. Consolidates AI on Bedrock with reasoning + image gen for the AWS track. |
 
 ### 3.3 Bill splitting + post-meal feedback loop (how it feeds the pipeline)
 
@@ -87,7 +87,7 @@ Item attribution from bill splitting is actually a _stronger_ signal than generi
 
 2. **Capture.** Camera opens in a receipt-framed mode → user snaps the receipt → image uploads to S3 under `receipts/{user_id}/{booking_id}.jpg`.
 
-3. **OCR.** S3 upload triggers a Lambda (S3 event notification). Lambda calls **Amazon Textract `AnalyzeExpense`**, which returns structured line items with `Description`, `Price`, `Quantity`, plus merchant name, subtotal, tax, and total. Raw response is stored in `receipt_captures.textract_raw` for auditability.
+3. **OCR.** S3 upload triggers a Lambda (S3 event notification). Lambda loads the receipt image from S3 and calls **Amazon Bedrock** (`Converse` or `InvokeModel`) with a **multimodal model** (Claude with vision or Amazon Nova) — image as a content block plus a short prompt requiring **strict JSON**: line items with `Description`, `Price`, `Quantity`, plus merchant name, subtotal, tax, and total. Raw model output is stored in `receipt_captures.ocr_raw` for auditability.
 
 4. **Item matching (runs async while user is in step 5).** A Supabase Edge Function fuzzy-matches each extracted line item against the `menu_items` table for that `restaurant_id`. Three-stage matcher:
    - **Stage 1 — exact match:** case-insensitive string equality on item name.
@@ -238,7 +238,7 @@ Strict rule: **free tier only, or services that have per-request pricing low eno
 
 | AWS service                         | Free tier limit                                           | CRAVE use                                                                                                                                            |
 | ----------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Amazon Bedrock**                  | Pay-as-you-go (not free tier, but ~pennies at demo scale) | Claude for reasoning, Titan Multimodal Embeddings, Stable Diffusion / Titan Image Generator for ad images. **This is the headline AWS integration.** |
+| **Amazon Bedrock**                  | Pay-as-you-go (not free tier, but ~pennies at demo scale) | Claude for reasoning; **Claude or Nova vision** for receipt/menu images → structured JSON; Titan Multimodal Embeddings; Stable Diffusion / Titan Image Generator for ad images. **This is the headline AWS integration.** Textract is intentionally not used — everything multimodal stays on Bedrock. |
 | **AWS Lambda**                      | 1M requests/month forever free                            | Wrapper functions that proxy Bedrock calls from the mobile app and dashboard. Avoids putting AWS credentials in the client.                          |
 | **Amazon API Gateway**              | 1M requests/month free (12 months)                        | Public endpoint for the Lambdas.                                                                                                                     |
 | **Amazon S3**                       | 5 GB free (12 months)                                     | Generated ad creative, menu photos, demo video assets. Served via signed URLs.                                                                       |
@@ -281,10 +281,10 @@ Strict rule: **free tier only, or services that have per-request pricing low eno
 │  Supabase    │   │   Amazon Bedrock   │   │       AWS S3       │
 │              │   │                    │   │   + CloudFront     │
 │ • Postgres   │   │ • Claude (reason)  │   │                    │
-│ • pgvector   │   │ • Titan Multimodal │   │ • Ad creative      │
-│ • Auth (SMS) │   │ • SD3 / Titan Img  │   │ • Menu photos      │
-│ • Realtime   │   └────────────────────┘   │ • Rendered videos  │
-│ • Storage    │                            └────────────────────┘
+│ • pgvector   │   │ • Receipt JSON OCR │   │ • Ad creative      │
+│ • Auth (SMS) │   │ • Titan Multimodal │   │ • Menu photos      │
+│ • Realtime   │   │ • SD3 / Titan Img  │   │ • Rendered videos  │
+│ • Storage    │   └────────────────────┘   └────────────────────┘
 │ • Edge Fns   │   ┌────────────────────┐
 │ • RLS        │   │   ElevenLabs       │   ┌────────────────────┐
 └──────────────┘   │ Conversational AI  │   │    Amazon Polly    │
@@ -325,9 +325,9 @@ dietary_constraints (user_id, constraint_type, hard boolean)
 receipt_captures (
   id, user_id, booking_id,
   image_s3_url,
-  textract_raw jsonb,
+  ocr_raw jsonb,
   merchant_matched_restaurant_id,
-  subtotal_cents, tax_cents, total_cents,   -- parsed from Textract
+  subtotal_cents, tax_cents, total_cents,   -- parsed from Bedrock vision OCR
   status text,                -- 'uploaded' | 'ocr_done' | 'split_sent' | 'feedback_collected'
   created_at
 )
@@ -398,7 +398,7 @@ Six founders, parallel tracks, one hard integration checkpoint at Hour 12 and a 
 | ↳ Mobile app                            | Founder 5 + Founder 2                                           | Onboarding (phone auth + 6 swipe cards), home screen with big voice button, recommendation result screen, group creation from contacts.                                                                                                                                                                                                                                                                                                                                                                                                              |
 | ↳ B2B dashboard                         | Founder 4                                                       | Login (restaurant account), home page with "Ask Crave" input, mock analytics charts (real schema, seeded data), campaign studio page skeleton.                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ↳ Ad generation pipeline                | Founder 6 (after voice agent stable)                            | Lambda that takes a prompt + restaurant brand → Bedrock image gen → S3 upload → signed URL back. Video path: generate 4 images, send to Remotion Lambda with Polly voiceover, MP4 to S3.                                                                                                                                                                                                                                                                                                                                                             |
-| ↳ Receipt OCR + bill split backend      | Founder 4 (after dashboard shell is up, parallel with RLS work) | Camera flow in mobile app → S3 upload → Lambda trigger → Textract `AnalyzeExpense` → Edge Function item matcher (exact → trigram → embedding) → `receipt_line_items` rows written. Split compute function (subtotal + pro-rata tax + tip). Venmo/CashApp deep-link generator.                                                                                                                                                                                                                                                                        |
+| ↳ Receipt OCR + bill split backend      | Founder 4 (after dashboard shell is up, parallel with RLS work) | Camera flow in mobile app → S3 upload → Lambda trigger → **Bedrock vision** receipt parse (structured JSON) → Edge Function item matcher (exact → trigram → embedding) → `receipt_line_items` rows written. Split compute function (subtotal + pro-rata tax + tip). Venmo/CashApp deep-link generator.                                                                                                                                                                                                                                                                        |
 | ↳ Bill split UI + feedback piggyback    | Founder 5 (mobile) + Founder 3 (trigger)                        | Drag-and-drop item-to-avatar UI with live split totals. Tip slider. "Send" button that posts deep links to each member (SMS via Supabase Auth SMS or just in-app modal). After send, quick swipe-rate cards for each user's assigned items. Supabase trigger on `item_feedback` insert recomputes and writes the updated `pref_embedding`.                                                                                                                                                                                                           |
 | ↳ Supabase RLS + realtime               | Founder 4                                                       | RLS policies on all B2B tables. Realtime channel for live bookings feed and group voting.                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | **Hour 12 — INTEGRATION CHECKPOINT**    | All                                                             | Every track demos independently. End-to-end tests: (1) two users log in, create a group, third user says "dinner with the boys" to voice agent, gets 3 recommendations spoken back; (2) restaurant user types "make me an Instagram ad for our margherita pizza" and sees an image appear; (3) user taps "Split the bill," snaps a test receipt, drags items to member avatars, hits Send, confirms a Venmo deep link fires, then sees feedback swipe cards for items they assigned to themselves. Any failing track triggers its fallback (see §9). |
@@ -417,7 +417,7 @@ Six founders, parallel tracks, one hard integration checkpoint at Hour 12 and a 
 | **ElevenLabs voice agent**                   | Switch to OpenAI Realtime API (already researched, similar tool-calling API).                                                                                                                         | Pre-record the voice interaction; play it over the demo with the real UI responding.                                              |
 | **Bedrock image gen**                        | Fall back to OpenAI `gpt-image-1`.                                                                                                                                                                    | Use 3–4 pre-generated demo ads loaded from S3; the "generation" is a 2-second spinner + reveal.                                   |
 | **Video ad rendering**                       | Cut video; ship image-only ads for the demo.                                                                                                                                                          | Show a pre-rendered MP4 from S3 instead of rendering live.                                                                        |
-| **Textract receipt OCR**                     | Use a pre-parsed JSON response for the demo receipt (same shape as Textract output, so the downstream bill-split + feedback pipeline is unchanged).                                                   | Same pre-parsed JSON fallback — the split compute, deep links, and embedding update still run live.                               |
+| **Bedrock receipt vision parse**             | Use a pre-parsed JSON blob for the demo receipt (**canonical `ReceiptParse` schema** — same shape the matcher expects, so bill-split + feedback pipeline is unchanged).                              | Same pre-parsed JSON fallback — the split compute, deep links, and embedding update still run live.                               |
 | **Receipt item matching**                    | If embedding-based matching is flaky, ship with just exact + trigram and accept lower recall on weird abbreviations. Unmatched items still work for the bill split; they just skip the feedback card. | Skip matching entirely for unmatched items; the split still works (we have prices), feedback cards only appear for matched items. |
 | **Venmo/CashApp deep links**                 | If one SDK-style URL scheme misbehaves on the demo device, fall back to the other.                                                                                                                    | Copy-paste the link from an in-app modal; the demo still shows the right amounts and notes per person.                            |
 | **Group resolution from voice ("the boys")** | LLM tool-call returns a hardcoded demo group.                                                                                                                                                         | Tap the group on-screen instead of speaking the name.                                                                             |
@@ -454,7 +454,7 @@ This is "using every Supabase primitive for something load-bearing," which is ex
 
 ### Best Use of AWS
 
-Bedrock is the anchor — Claude reasoning, Titan multimodal embeddings, SD3 for images. Wrapped by Lambda + API Gateway + S3 + CloudFront + Polly. Explicit AWS architecture diagram on a pitch slide. Cost footprint during the demo is quantifiable (a few dollars in Bedrock calls), which shows we understand production economics.
+Bedrock is the anchor — Claude reasoning, **Claude/Nova vision** for receipt → structured JSON, Titan multimodal embeddings, SD3 for images. Wrapped by Lambda + API Gateway + S3 + CloudFront + Polly. Explicit AWS architecture diagram on a pitch slide. Cost footprint during the demo is quantifiable (a few dollars in Bedrock calls), which shows we understand production economics.
 
 ### Most Startup Ready
 
@@ -473,6 +473,7 @@ This is where the (now slimmed-down) business story matters. Keep it to: problem
 | Demo Wi-Fi dies on-stage                                            | Phone hotspot + pre-recorded backup video on laptop.                                                                               |
 | Everyone tries to integrate at once at Hour 12                      | That's what the integration checkpoint is for. Each track demos its own slice before anyone stitches.                              |
 | We build the Image Playground UI instead of fixing voice bugs       | Hard rule: nobody touches the orbit UI until voice is green.                                                                       |
+| Bedrock vision mis-reads a noisy receipt (folded paper, glare)      | Validate JSON against schema; one retry with a stricter prompt; fall back to pre-parsed demo JSON (§9).                            |
 
 ---
 
@@ -485,7 +486,7 @@ This is where the (now slimmed-down) business story matters. Keep it to: problem
 - [ ] Backup demo video recorded and on a local drive
 - [ ] Pitch deck: 5 slides
 - [ ] Supabase project: pgvector enabled, pg_trgm enabled, RLS on, realtime channels configured
-- [ ] AWS: Bedrock model access approved, Lambdas deployed, S3 bucket public-read through CloudFront for demo assets, Textract tested on a sample receipt
+- [ ] AWS: Bedrock model access approved, Lambdas deployed, S3 bucket public-read through CloudFront for demo assets, Bedrock vision OCR tested on a sample receipt (JSON validates against schema)
 - [ ] Mascot name submitted (free $25 Starbucks card, why not)
 
 ---
