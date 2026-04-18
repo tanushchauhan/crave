@@ -1,0 +1,32 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BedrockInvokeScoped",
+      "Effect": "Allow",
+      "Action": ["bedrock:InvokeModel", "bedrock:Converse"],
+      "Resource": [
+        "arn:aws:bedrock:*::foundation-model/*",
+        "arn:aws:bedrock:us-east-1:ACCOUNT_ID:inference-profile/*"
+      ]
+    },
+    {
+      "Sid": "ReceiptBucketRW",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": [
+        "arn:aws:s3:::crave-receipts-ACCOUNT_ID/*",
+        "arn:aws:s3:::crave-assets-ACCOUNT_ID/*"
+      ]
+    },
+    {
+      "Sid": "ListBucketsForHead",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": [
+        "arn:aws:s3:::crave-receipts-ACCOUNT_ID",
+        "arn:aws:s3:::crave-assets-ACCOUNT_ID"
+      ]
+    }
+  ]
+}

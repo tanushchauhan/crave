@@ -1,0 +1,14 @@
+{
+  "LambdaFunctionConfigurations": [
+    {
+      "Id": "receipt-created",
+      "LambdaFunctionArn": "arn:aws:lambda:REGION:ACCOUNT_ID:function:crave-receipt-ocr",
+      "Events": ["s3:ObjectCreated:*"],
+      "Filter": {
+        "Key": {
+          "FilterRules": [{ "Name": "prefix", "Value": "receipts/" }]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+# CRAVE — Supabase CLI project (docs/supabase.md §0, §3, §10).
+# Run: supabase link --project-ref <ref> && supabase db push
+# Phone OTP + redirect URLs: finish in hosted dashboard (Auth → URL config) and match Expo / Next URLs here.
+
+project_id = "crave"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 15
+
+[studio]
+enabled = true
+port = 54323
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3000"
+additional_redirect_urls = [
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "http://localhost:8081",
+]
+
+[auth.email]
+enable_signup = false
+
+# Edge: match-receipt-items uses x-crave-internal-secret, not the user JWT (docs/supabase.md §11).
+[functions.match-receipt-items]
+verify_jwt = false

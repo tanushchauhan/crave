@@ -1,0 +1,12 @@
+{
+  "name": "crave-receipt-ocr",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.758.0",
+    "@aws-sdk/client-s3": "^3.758.0"
+  }
+}

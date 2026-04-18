@@ -1,0 +1,4 @@
+# env files (secrets — never commit)
+.env
+
+.DS_Store
