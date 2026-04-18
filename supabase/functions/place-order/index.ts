@@ -23,7 +23,8 @@ Deno.serve(async (req) => {
 
   const url = Deno.env.get("SUPABASE_URL") ?? "";
   const anon = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  // Secret name cannot be SUPABASE_* on hosted Edge (CLI restriction). Same value as dashboard "service role".
+  const serviceKey = Deno.env.get("CRAVE_SERVICE_ROLE_KEY") ?? "";
 
   if (!serviceKey) {
     return new Response(JSON.stringify({ error: "server_misconfigured" }), {

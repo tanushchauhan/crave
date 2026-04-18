@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
     });
   }
 
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const serviceKey = Deno.env.get("CRAVE_SERVICE_ROLE_KEY");
   const url = Deno.env.get("SUPABASE_URL");
   if (!serviceKey || !url) {
     return new Response(JSON.stringify({ error: "server_misconfigured" }), {

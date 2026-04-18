@@ -1,5 +1,7 @@
 -- CRAVE: item_feedback + user_pref_updates + preference blend trigger (docs/supabase.md §6.7, §12; plan.md §3.3)
 
+set search_path = public, extensions;
+
 create table public.item_feedback (
   id uuid primary key default gen_random_uuid (),
   user_id uuid not null references public.users (id) on delete cascade,
@@ -30,6 +32,7 @@ create or replace function public.zero_vector_1536 ()
 returns vector(1536)
 language sql
 immutable
+set search_path = public, extensions
 as $$
   select ('[' || repeat('0,', 1535) || '0]')::vector (1536);
 $$;
@@ -38,7 +41,7 @@ create or replace function public.blend_pref_embedding_from_feedback ()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_old vector(1536);

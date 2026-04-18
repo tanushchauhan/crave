@@ -1,5 +1,7 @@
 -- CRAVE: enums + users/contacts/dining_groups + auth mirror trigger per docs/supabase.md §6.2
 
+set search_path = public, extensions;
+
 create type public.booking_source as enum ('partner_app', 'phone_call_logged');
 create type public.booking_status as enum ('pending', 'confirmed', 'cancelled', 'completed');
 create type public.receipt_capture_status as enum (

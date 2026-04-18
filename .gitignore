@@ -1,4 +1,10 @@
 # env files (secrets — never commit)
 .env
+.env.*
+!.env.example
+.env.crave-internal-generated
+
+# Supabase CLI link cache (local only)
+supabase/.temp/
 
 .DS_Store

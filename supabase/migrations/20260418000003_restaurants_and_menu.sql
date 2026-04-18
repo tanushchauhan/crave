@@ -1,5 +1,7 @@
 -- CRAVE: restaurants + menu_items + HNSW/trigram/GiST indexes per docs/supabase.md §6.3
 
+set search_path = public, extensions;
+
 create table public.restaurants (
   id uuid primary key default gen_random_uuid (),
   name text not null,
