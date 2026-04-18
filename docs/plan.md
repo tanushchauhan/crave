@@ -149,7 +149,7 @@ The B2B dashboard is where restaurants get value in exchange for partner status.
 
 1. **Home / "Ask Crave!"** — Dashboard landing page. Top half: a prominent search-style input — _"Ask Crave anything about your restaurant…"_ Below it, a live KPI strip (today's bookings, covers this week, average party size, item feedback sentiment score). Recent bookings and recent receipt feedback are shown as two side-by-side activity feeds.
 
-2. **Live Bookings Feed** — Real-time stream of bookings coming in from the CRAVE consumer app. Each row shows party size, group context tag (date night / with the boys / family / business), dietary notes, scheduled time, and booking source (`partner_app` vs phone). New rows animate in via Supabase Realtime within ~500ms of the consumer tapping book.
+2. **Live Bookings Feed** — Real-time stream of bookings coming in from the CRAVE consumer app. Each row shows party size, group context tag (date night / with the boys / family / business), dietary notes, and scheduled time. New rows animate in via Supabase Realtime within ~500ms of the consumer tapping book.
 
 3. **Live Orders Feed** — A separate real-time feed powered by Supabase Realtime that displays incoming food orders directly placed through the voice agent from the mobile app.
 
@@ -159,11 +159,9 @@ The B2B dashboard is where restaurants get value in exchange for partner status.
 
 6. **Customer Insights** — Anonymized persona segments: _"Your typical Tuesday diner is a group of 4 in the 'with the boys' context, average $35/head, most-liked items: birria tacos and mezcal margaritas."_ Personas are clustered from `bookings` + `group_members` + `item_feedback`.
 
-7. **Competitive View** — Cross-restaurant consideration graph: _"70% of users who viewed your restaurant in the last 7 days also viewed X and Y. You won 42% of those sessions."_ Uses the impression log across all restaurants — something no individual restaurant's own analytics can ever see.
+7. **Ad Campaign Studio** — Creative generation workspace (Multimodal track bait). Prompt box + optional reference image upload → Bedrock image gen → generated Instagram-ready carousel (3 variants) + generated caption + suggested hashtags + "what this'd look like in the feed" preview. Short video variant renders via Remotion + Polly voiceover. Saved campaigns go to `ad_campaigns`; assets land in S3 and serve through CloudFront.
 
-8. **Ad Campaign Studio** — Creative generation workspace (Multimodal track bait). Prompt box + optional reference image upload → Bedrock image gen → generated Instagram-ready carousel (3 variants) + generated caption + suggested hashtags + "what this'd look like in the feed" preview. Short video variant renders via Remotion + Polly voiceover. Saved campaigns go to `ad_campaigns`; assets land in S3 and serve through CloudFront.
-
-9. **Trend Radar** — City-level and neighborhood-level food trends aggregated from consumer recommendation sessions and voice-agent intent extraction. _"'Birria' is up 40% in search intent this month in East Austin."_ Read-only for MVP; valuable content for the restaurant marketing story.
+8. **Trend Radar** — City-level and neighborhood-level food trends aggregated from consumer recommendation sessions and voice-agent intent extraction. _"'Birria' is up 40% in search intent this month in East Austin."_ Read-only for MVP; valuable content for the restaurant marketing story.
 
 ### 4.2 "Just ask Crave!" — Chatbot data sources and architecture
 
