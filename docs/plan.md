@@ -159,7 +159,7 @@ The B2B dashboard is where restaurants get value in exchange for partner status.
 
 6. **Ad Campaign Studio** — Creative generation workspace (Multimodal track bait). Prompt box + optional reference image upload → Bedrock image gen → generated Instagram-ready carousel (3 variants) + generated caption + suggested hashtags + "what this'd look like in the feed" preview. Short video variant renders via Remotion + Polly voiceover. Saved campaigns go to `ad_campaigns`; assets land in S3 and serve through CloudFront.
 
-7. **Trend Radar** — City-level and neighborhood-level food trends aggregated from consumer recommendation sessions and voice-agent intent extraction. _"'Birria' is up 40% in search intent this month in East Austin."_ Read-only for MVP; valuable content for the restaurant marketing story.
+7. **Trend Radar** — City-level and neighborhood-level food trends actively populated by an AI (Claude via Bedrock) that aggregates intelligence from context in our Supabase database about the restaurant. _"'Birria' is up 40% in search intent this month in East Austin."_ Read-only for MVP; valuable content for the restaurant marketing story.
 
 ### 4.2 "Just ask Crave!" — Chatbot data sources and architecture
 
@@ -175,7 +175,7 @@ The chatbot is Claude (via Bedrock) with **constrained tool calling**. It does N
 | `impressions` (cross-restaurant)          | Competitive view graph — who customers considered alongside you                        |
 | `bookings` + `group_members` + `contacts` | Customer segments, group compositions, repeat-visit behavior                           |
 | `ad_campaigns` + `ad_assets`              | Your own ad history, generation prompts, asset URLs                                    |
-| Aggregated trend materialized views       | Neighborhood cuisine trends, anonymized across all users                               |
+| AI-aggregated trend intelligence          | Neighborhood cuisine trends, anonymized across all users and populated by AI           |
 
 **Available tools (LLM picks and parameterizes):**
 

@@ -407,7 +407,7 @@ Every screen below follows a strict structure. All copy and sample data provided
 
 ### Trend Radar
 
-**Purpose:** City-wide anonymized trend data.
+**Purpose:** City-wide anonymized trend data actively populated by an AI agent evaluating context in our Supabase database about the restaurant.
 **Entry points:** Sidebar navigation.
 **Layout regions:**
 
