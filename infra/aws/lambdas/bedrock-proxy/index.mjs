@@ -93,9 +93,7 @@ function openAiMessagesToBedrock(body) {
   if (body.tools && Array.isArray(body.tools) && body.tools.length > 0) {
     return { error: "tools_not_supported", message: "Use client tools for CRAVE; OpenAI shim is text-only." };
   }
-  if (body.stream === true) {
-    return { error: "streaming_not_supported", message: "Set stream:false in ElevenLabs Custom LLM." };
-  }
+  // ElevenLabs Custom LLM often sends stream:true; we still return a non-SSE JSON chat.completion (no token streaming).
   const system =
     systemParts.length > 0 ? [{ text: systemParts.join("\n\n") }] : undefined;
 
