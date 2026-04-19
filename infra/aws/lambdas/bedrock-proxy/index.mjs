@@ -46,9 +46,9 @@ function response(statusCode, bodyObj, extraHeaders = {}) {
 }
 
 /** ElevenLabs Custom LLM requires SSE (text/event-stream), not a single JSON body. */
-function responseSse(sseBody, extraHeaders = {}) {
+function responseSse(sseBody, statusCode = 200, extraHeaders = {}) {
   return {
-    statusCode: 200,
+    statusCode,
     headers: {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache",
@@ -57,6 +57,13 @@ function responseSse(sseBody, extraHeaders = {}) {
     },
     body: sseBody,
   };
+}
+
+/** OpenAI-style streamed error; ElevenLabs often expects 200 + SSE, not JSON 502. */
+function sseOpenAiErrorPayload(message, code = "bedrock_error") {
+  return `data: ${JSON.stringify({
+    error: { message, type: "api_error", code, param: null },
+  })}\n\ndata: [DONE]\n\n`;
 }
 
 function rawBodyFromEvent(event) {
@@ -80,8 +87,12 @@ function openAiContentToBedrockBlocks(content) {
   if (!Array.isArray(content)) return [{ text: String(content) }];
   const blocks = [];
   for (const part of content) {
-    if (part && part.type === "text" && typeof part.text === "string") {
+    if (!part) continue;
+    if (part.type === "text" && typeof part.text === "string") {
       blocks.push({ text: part.text });
+    }
+    if (part.type === "image_url" || part.type === "input_image") {
+      blocks.push({ text: "[User attached an image; describe or ask without relying on pixels here.]" });
     }
   }
   return blocks.length ? blocks : [{ text: "" }];
@@ -145,7 +156,8 @@ function mapOpenAiFinishReason(stopReason) {
 }
 
 function bedrockAssistantText(output) {
-  const blocks = output?.message?.content;
+  const msg = output?.message;
+  const blocks = msg?.content;
   if (!Array.isArray(blocks)) return "";
   const parts = [];
   for (const b of blocks) {
@@ -153,46 +165,63 @@ function bedrockAssistantText(output) {
     if (typeof b.text === "string") parts.push(b.text);
     const rt = b.reasoningContent?.reasoningText?.text;
     if (typeof rt === "string") parts.push(rt);
+    if (b.toolUse?.name) {
+      parts.push(`[tool:${b.toolUse.name}]`);
+    }
   }
-  return parts.join("");
+  const s = parts.join("");
+  return typeof s === "string" ? s : "";
 }
 
-/** OpenAI-compatible SSE for chat.completions (ElevenLabs Custom LLM). */
+/**
+ * OpenAI-compatible SSE for chat.completions (ElevenLabs parses chunks like OpenAI SDK model_dump()).
+ * Include logprobs:null on choices; do not attach usage to chunks (OpenAI only adds it with stream_options).
+ */
 function sseOpenAiChatCompletion({
   id,
   created,
   model,
+  modelFallback,
   text,
   finishReason,
-  usage,
 }) {
-  const base = { id, object: "chat.completion.chunk", created, model };
+  const safeModel =
+    (model && String(model).trim()) ||
+    (modelFallback && String(modelFallback).trim()) ||
+    "gpt-4";
+  const base = {
+    id,
+    object: "chat.completion.chunk",
+    created,
+    model: safeModel,
+  };
+  const choice = (delta, finish_reason) => ({
+    index: 0,
+    delta,
+    logprobs: null,
+    finish_reason,
+  });
+  const outText =
+    text == null || String(text).length === 0
+      ? " "
+      : String(text);
   const lines = [];
   lines.push(
     `data: ${JSON.stringify({
       ...base,
-      choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }],
+      choices: [choice({ role: "assistant" }, null)],
     })}\n\n`,
   );
   lines.push(
     `data: ${JSON.stringify({
       ...base,
-      choices: [
-        {
-          index: 0,
-          delta: { content: text == null ? "" : String(text) },
-          finish_reason: null,
-        },
-      ],
+      choices: [choice({ content: outText }, null)],
     })}\n\n`,
   );
   lines.push(
     `data: ${JSON.stringify({
       ...base,
-      choices: [
-        { index: 0, delta: {}, finish_reason: finishReason || "stop" },
-      ],
-      ...(usage ? { usage } : {}),
+      choices: [choice({}, finishReason || "stop")],
     })}\n\n`,
   );
   lines.push("data: [DONE]\n\n");
@@ -283,6 +312,14 @@ export const handler = async (event) => {
     const body = parseBody(event);
     const mapped = openAiMessagesToBedrock(body);
     if (mapped.error) {
+      if (body.stream !== false) {
+        return responseSse(
+          sseOpenAiErrorPayload(
+            mapped.message || mapped.error || "bad_request",
+            String(mapped.error || "invalid_request_error"),
+          ),
+        );
+      }
       return response(400, mapped);
     }
 
@@ -311,13 +348,16 @@ export const handler = async (event) => {
       out = await client.send(cmd);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      if (body.stream !== false) {
+        return responseSse(sseOpenAiErrorPayload(msg, "bedrock_error"));
+      }
       return response(502, { error: "bedrock_error", message: msg });
     }
 
     const text = bedrockAssistantText(out.output);
     const modelEcho =
-      typeof body.model === "string" && body.model.length > 0
-        ? body.model
+      typeof body.model === "string" && body.model.trim().length > 0
+        ? body.model.trim()
         : modelId;
     const created = Math.floor(Date.now() / 1000);
     const id = `chatcmpl-${created}-${Math.random().toString(36).slice(2, 12)}`;
@@ -356,9 +396,9 @@ export const handler = async (event) => {
         id,
         created,
         model: modelEcho,
+        modelFallback: modelId,
         text,
         finishReason,
-        usage,
       }),
     );
   }
