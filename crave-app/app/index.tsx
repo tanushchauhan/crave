@@ -1,14 +1,12 @@
 import FinishSetupHome from "@/pages/FinishSetupHome";
 import OnboardingFlow from "@/pages/OnboardingFlow";
 import { logAuthSession } from "@/lib/authDebug";
+import { markSetupComplete, readSetupCompleteMarker } from "@/lib/setupGate";
 import { supabase } from "@/lib/supabase";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { Redirect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, View } from "react-native";
-
-const SETUP_KEY = "crave.setup.complete";
 
 type Stage = "loading" | "onboarding" | "setup" | "done";
 
@@ -35,9 +33,9 @@ export default function Index() {
             let cancelled = false;
 
             void (async () => {
-                const [{ data }, setupRaw] = await Promise.all([
+                const [{ data }, setupComplete] = await Promise.all([
                     supabase.auth.getSession(),
-                    AsyncStorage.getItem(SETUP_KEY),
+                    readSetupCompleteMarker(),
                 ]);
                 if (cancelled) {
                     return;
@@ -45,7 +43,6 @@ export default function Index() {
                 if (data.session) {
                     logAuthSession("getSession (focused)", data.session);
                 }
-                const setupComplete = setupRaw === "1";
                 setStage(resolveStage(!!data.session, setupComplete));
                 setReady(true);
             })();
@@ -57,16 +54,15 @@ export default function Index() {
     );
 
     useEffect(() => {
-        const applyFromAuth = (session: boolean, setupRaw: string | null) => {
-            const setupComplete = setupRaw === "1";
+        const applyFromAuth = (session: boolean, setupComplete: boolean) => {
             setStage(resolveStage(session, setupComplete));
         };
 
         const {
             data: { subscription },
         } = supabase.auth.onAuthStateChange((_event, session) => {
-            void AsyncStorage.getItem(SETUP_KEY).then((setupRaw) => {
-                applyFromAuth(!!session, setupRaw);
+            void readSetupCompleteMarker().then((setupComplete) => {
+                applyFromAuth(!!session, setupComplete);
             });
         });
 
@@ -102,7 +98,7 @@ export default function Index() {
         return (
             <FinishSetupHome
                 onComplete={async () => {
-                    await AsyncStorage.setItem(SETUP_KEY, "1");
+                    await markSetupComplete();
                     setStage("done");
                 }}
             />

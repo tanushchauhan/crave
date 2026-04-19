@@ -321,7 +321,7 @@ export default function ReservationsPage({
             />
 
             <VoiceAssistantFab
-                onPress={onVoicePress ?? (() => {})}
+                onPress={onVoicePress}
                 style={{ bottom: insets.bottom + navHeight + 8 }}
             />
 

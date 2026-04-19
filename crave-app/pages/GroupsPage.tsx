@@ -328,7 +328,7 @@ export default function GroupsPage({
             </ScrollView>
 
             <VoiceAssistantFab
-                onPress={onVoicePress ?? (() => {})}
+                onPress={onVoicePress}
                 style={{ bottom: insets.bottom + navHeight + 8 }}
             />
 

@@ -11,6 +11,7 @@
  *   OpenAI-style `tools` in the body are ignored (text-only Bedrock); ElevenLabs system tools still attach to requests.
  * - INTERNAL_HMAC_SECRET or CRAVE_INTERNAL_SECRET — for POST /internal/embeddings/text (x-crave-internal-secret; same as match-receipt-items / receipt-ocr).
  * - TITAN_EMBEDDING_MODEL_ID (optional) — default amazon.titan-embed-text-v1 (1536-d).
+ * - POST /voice/maple-setup — Supabase JWT; body { audio_base64, media_format, existing_notes? } or { transcript } for text-only; Transcribe → Bedrock → JSON lines.
  */
 
 import {
@@ -18,7 +19,13 @@ import {
   ConverseCommand,
   InvokeModelCommand,
 } from "@aws-sdk/client-bedrock-runtime";
-import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import {
+  TranscribeClient,
+  StartTranscriptionJobCommand,
+  GetTranscriptionJobCommand,
+  DeleteTranscriptionJobCommand,
+} from "@aws-sdk/client-transcribe";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const UUID_RE =
@@ -363,11 +370,20 @@ function checkElevenLabsCustomLlmAuth(authHeader) {
   return { modelId };
 }
 
+/** Normalize an Authorization header so Supabase always sees `Bearer <jwt>`. */
+function normalizeBearer(authHeader) {
+  if (!authHeader || typeof authHeader !== "string") return "";
+  const v = authHeader.trim();
+  if (!v) return "";
+  if (/^Bearer\s+\S+/i.test(v)) return v;
+  return `Bearer ${v}`;
+}
+
 async function forwardToSupabaseEdge(targetUrl, anonKey, authHeader, event) {
   const upstream = await fetch(targetUrl, {
     method: "POST",
     headers: {
-      Authorization: authHeader ?? "",
+      Authorization: normalizeBearer(authHeader),
       apikey: anonKey,
       "Content-Type": "application/json",
     },
@@ -439,7 +455,7 @@ async function handleReceiptsSignedUrl(event) {
   expiresIn = Math.min(3600, Math.max(60, Math.round(expiresIn)));
 
   const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
-    headers: { Authorization: authHeader, apikey: anon },
+    headers: { Authorization: normalizeBearer(authHeader), apikey: anon },
   });
   if (userRes.status === 401 || userRes.status === 403) {
     return response(401, { error: "invalid_session" });
@@ -460,7 +476,7 @@ async function handleReceiptsSignedUrl(event) {
     `${supabaseUrl}/rest/v1/bookings?id=eq.${encodeURIComponent(bookingId)}&select=id`,
     {
       headers: {
-        Authorization: authHeader,
+        Authorization: normalizeBearer(authHeader),
         apikey: anon,
         Accept: "application/json",
       },
@@ -568,6 +584,329 @@ async function handleInternalEmbeddingsText(event) {
   }
 }
 
+function mapMediaFormatForTranscribe(raw) {
+  const f = String(raw || "mp4")
+    .toLowerCase()
+    .replace(/^\./, "");
+  if (f === "m4a" || f === "aac" || f === "mp4" || f === "video/mp4") return "mp4";
+  if (f === "mp3" || f === "mpeg") return "mp3";
+  if (f === "wav" || f === "wave") return "wav";
+  if (f === "webm") return "webm";
+  if (f === "flac") return "flac";
+  if (f === "ogg" || f === "oga") return "ogg";
+  return "mp4";
+}
+
+function parseMapleLinesFromBedrockText(text) {
+  const t = String(text || "").trim();
+  if (!t) return [];
+  let inner = t;
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) inner = fence[1].trim();
+  try {
+    const arr = JSON.parse(inner);
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .map((x) => String(x).trim())
+      .filter(Boolean)
+      .slice(0, 12);
+  } catch {
+    return inner
+      .split(/\n+/)
+      .map((s) => s.replace(/^[-*•]\s*/, "").trim())
+      .filter(Boolean)
+      .slice(0, 12);
+  }
+}
+
+/** Transcribe returns an HTTPS URL to a private S3 object — anonymous fetch() gets 403. */
+function parseS3BucketKeyFromUri(uri) {
+  const s = String(uri || "").trim();
+  if (!s) return null;
+  if (s.startsWith("s3://")) {
+    const rest = s.slice(5);
+    const i = rest.indexOf("/");
+    if (i <= 0 || i >= rest.length - 1) return null;
+    return { bucket: rest.slice(0, i), key: decodeURIComponent(rest.slice(i + 1)) };
+  }
+  let url;
+  try {
+    url = new URL(s);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:") return null;
+  const host = url.hostname.toLowerCase();
+  const keyPath = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
+
+  // Path-style: s3.amazonaws.com/<bucket>/<key> or s3.<region>.amazonaws.com/<bucket>/<key> (host starts with "s3.")
+  if (host === "s3.amazonaws.com" || /^s3\./.test(host)) {
+    const segs = keyPath.split("/").filter(Boolean);
+    if (segs.length >= 2) {
+      return { bucket: segs[0], key: segs.slice(1).join("/") };
+    }
+    return null;
+  }
+
+  // Virtual-hosted: <bucket>.s3.<region>.amazonaws.com/<key> or <bucket>.s3.amazonaws.com/<key>
+  const labels = host.split(".");
+  const s3i = labels.indexOf("s3");
+  if (s3i > 0) {
+    const bucket = labels.slice(0, s3i).join(".");
+    if (bucket) return { bucket, key: keyPath };
+  }
+  return null;
+}
+
+function transcriptTextFromTranscribeJson(json) {
+  const transcripts = json?.results?.transcripts;
+  if (Array.isArray(transcripts) && transcripts[0]?.transcript) {
+    return String(transcripts[0].transcript);
+  }
+  const alt = json?.results?.transcript;
+  if (typeof alt === "string") return alt;
+  return "";
+}
+
+async function fetchTranscriptTextFromUri(uri, s3client) {
+  const loc = parseS3BucketKeyFromUri(uri);
+  if (loc && s3client) {
+    const out = await s3client.send(
+      new GetObjectCommand({ Bucket: loc.bucket, Key: loc.key }),
+    );
+    if (!out.Body) {
+      throw new Error("transcript_empty_body");
+    }
+    const raw = await out.Body.transformToString();
+    const json = JSON.parse(raw);
+    return transcriptTextFromTranscribeJson(json);
+  }
+
+  const res = await fetch(uri);
+  if (!res.ok) {
+    throw new Error(`transcript_fetch_${res.status}`);
+  }
+  const json = await res.json();
+  return transcriptTextFromTranscribeJson(json);
+}
+
+/** POST /voice/maple-setup — optional `transcript`; else `audio_base64` + Transcribe on S3 → Bedrock lines. */
+async function handleVoiceMapleSetup(event) {
+  const supabaseUrl = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
+  const anon = process.env.SUPABASE_ANON_KEY;
+  const receiptsBucket = process.env.RECEIPTS_BUCKET;
+  const modelId = (process.env.BEDROCK_TEXT_MODEL_ID || "").trim();
+
+  if (!supabaseUrl || !anon) {
+    return response(500, { error: "missing_supabase_config" });
+  }
+  if (!modelId) {
+    return response(501, {
+      error: "bedrock_not_configured",
+      message: "Set BEDROCK_TEXT_MODEL_ID on crave-bedrock-proxy.",
+    });
+  }
+  if (!receiptsBucket) {
+    return response(503, {
+      error: "receipts_bucket_not_configured",
+      message: "Set RECEIPTS_BUCKET for maple voice temp objects.",
+    });
+  }
+
+  const authHeader = getHeader(event.headers, "authorization");
+  if (!authHeader) {
+    return response(401, { error: "missing_authorization" });
+  }
+
+  const body = parseBody(event);
+  let transcript = typeof body.transcript === "string" ? body.transcript.trim() : "";
+  const audioB64 =
+    typeof body.audio_base64 === "string" ? body.audio_base64.replace(/\s/g, "") : "";
+  const existingNotes =
+    typeof body.existing_notes === "string" ? body.existing_notes.trim() : "";
+  const mediaFmtIn = typeof body.media_format === "string" ? body.media_format : "mp4";
+
+  const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    headers: { Authorization: normalizeBearer(authHeader), apikey: anon },
+  });
+  if (userRes.status === 401 || userRes.status === 403) {
+    return response(401, { error: "invalid_session" });
+  }
+  if (!userRes.ok) {
+    return response(502, { error: "auth_lookup_failed", status: userRes.status });
+  }
+  const sessionUser = await userRes.json();
+  const userId = sessionUser?.id;
+  if (!userId || !UUID_RE.test(String(userId))) {
+    return response(401, { error: "invalid_session" });
+  }
+
+  if (!transcript) {
+    if (!audioB64) {
+      return response(400, {
+        error: "audio_or_transcript_required",
+        message: "Send audio_base64 + media_format, or transcript for text-only.",
+      });
+    }
+    if (audioB64.length > 6_500_000) {
+      return response(400, { error: "audio_too_large" });
+    }
+
+    let buf;
+    try {
+      buf = Buffer.from(audioB64, "base64");
+    } catch {
+      return response(400, { error: "invalid_base64" });
+    }
+    if (buf.length < 200) {
+      return response(400, { error: "audio_too_short" });
+    }
+
+    const mediaFormat = mapMediaFormatForTranscribe(mediaFmtIn);
+    const ext = mediaFormat === "mp4" ? "m4a" : mediaFormat;
+    const inputKey = `maple-voice-tmp/${userId}/${Date.now()}.${ext}`;
+    const jobName = `ms${String(userId).replace(/-/g, "")}${Date.now()}`.slice(0, 180);
+
+    const s3 = new S3Client({});
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: receiptsBucket,
+        Key: inputKey,
+        Body: buf,
+        ContentType:
+          mediaFormat === "mp4"
+            ? "audio/mp4"
+            : mediaFormat === "webm"
+              ? "audio/webm"
+              : `audio/${mediaFormat}`,
+      }),
+    );
+
+    const mediaUri = `s3://${receiptsBucket}/${inputKey}`;
+
+    const transcribe = new TranscribeClient({});
+    try {
+      await transcribe.send(
+        new StartTranscriptionJobCommand({
+          TranscriptionJobName: jobName,
+          LanguageCode: "en-US",
+          Media: { MediaFileUri: mediaUri },
+          MediaFormat: mediaFormat,
+          OutputBucketName: receiptsBucket,
+        }),
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await s3
+        .send(new DeleteObjectCommand({ Bucket: receiptsBucket, Key: inputKey }))
+        .catch(() => {});
+      return response(502, {
+        error: "transcribe_start_failed",
+        message: msg,
+      });
+    }
+
+    let job;
+    for (let i = 0; i < 75; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      job = await transcribe.send(
+        new GetTranscriptionJobCommand({ TranscriptionJobName: jobName }),
+      );
+      const st = job.TranscriptionJob?.TranscriptionJobStatus;
+      if (st === "COMPLETED") break;
+      if (st === "FAILED") {
+        const reason = job.TranscriptionJob?.FailureReason || "unknown";
+        await s3
+          .send(new DeleteObjectCommand({ Bucket: receiptsBucket, Key: inputKey }))
+          .catch(() => {});
+        await transcribe
+          .send(new DeleteTranscriptionJobCommand({ TranscriptionJobName: jobName }))
+          .catch(() => {});
+        return response(502, { error: "transcribe_failed", message: reason });
+      }
+    }
+
+    if (job?.TranscriptionJob?.TranscriptionJobStatus !== "COMPLETED") {
+      await s3
+        .send(new DeleteObjectCommand({ Bucket: receiptsBucket, Key: inputKey }))
+        .catch(() => {});
+      await transcribe
+        .send(new DeleteTranscriptionJobCommand({ TranscriptionJobName: jobName }))
+        .catch(() => {});
+      return response(504, { error: "transcribe_timeout" });
+    }
+
+    const fileUri = job?.TranscriptionJob?.Transcript?.TranscriptFileUri;
+    if (!fileUri) {
+      await s3
+        .send(new DeleteObjectCommand({ Bucket: receiptsBucket, Key: inputKey }))
+        .catch(() => {});
+      await transcribe
+        .send(new DeleteTranscriptionJobCommand({ TranscriptionJobName: jobName }))
+        .catch(() => {});
+      return response(502, { error: "transcribe_no_transcript_uri" });
+    }
+
+    try {
+      transcript = await fetchTranscriptTextFromUri(fileUri, s3);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await s3
+        .send(new DeleteObjectCommand({ Bucket: receiptsBucket, Key: inputKey }))
+        .catch(() => {});
+      await transcribe
+        .send(new DeleteTranscriptionJobCommand({ TranscriptionJobName: jobName }))
+        .catch(() => {});
+      return response(502, { error: "transcript_fetch_failed", message: msg });
+    }
+
+    await s3
+      .send(new DeleteObjectCommand({ Bucket: receiptsBucket, Key: inputKey }))
+      .catch(() => {});
+    await transcribe
+      .send(new DeleteTranscriptionJobCommand({ TranscriptionJobName: jobName }))
+      .catch(() => {});
+  }
+
+  if (!String(transcript).trim()) {
+    return response(400, { error: "empty_transcript" });
+  }
+
+  const bedrock = new BedrockRuntimeClient({});
+  const system = [
+    {
+      text: `You extract dining preferences from a user's speech transcript (may be noisy). Return ONLY a JSON array of 2-8 short preference strings (cuisines, ingredients, allergies, spice level, party size, occasions). Example: ["Loves spicy Thai food","Avoids cilantro","Usually books for four"]. No markdown, no explanation, no object wrapper — only the array.`,
+    },
+  ];
+  const userText = `Existing Maple notes (may be empty):\n${existingNotes || "(none)"}\n\nNew transcript:\n${transcript}`;
+
+  let lines;
+  try {
+    const out = await bedrock.send(
+      new ConverseCommand({
+        modelId,
+        system,
+        messages: [{ role: "user", content: [{ text: userText }] }],
+        inferenceConfig: { maxTokens: 1024, temperature: 0.2 },
+      }),
+    );
+    const raw = bedrockAssistantText(out.output);
+    lines = parseMapleLinesFromBedrockText(raw);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return response(502, { error: "bedrock_failed", message: msg });
+  }
+
+  if (lines.length === 0) {
+    lines = [transcript.slice(0, 280)];
+  }
+
+  return response(200, {
+    transcript: transcript.slice(0, 8000),
+    lines,
+  });
+}
+
 export const handler = async (event) => {
   const method =
     event.requestContext?.http?.method ?? event.httpMethod ?? "GET";
@@ -592,6 +931,10 @@ export const handler = async (event) => {
     path === "/internal/embeddings/text"
   ) {
     return handleInternalEmbeddingsText(event);
+  }
+
+  if (path.endsWith("/voice/maple-setup") || path === "/voice/maple-setup") {
+    return handleVoiceMapleSetup(event);
   }
 
   const anon = process.env.SUPABASE_ANON_KEY;

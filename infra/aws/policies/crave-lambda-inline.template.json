@@ -27,6 +27,16 @@
         "arn:aws:s3:::__RECEIPTS_BUCKET__",
         "arn:aws:s3:::__ASSETS_BUCKET__"
       ]
+    },
+    {
+      "Sid": "TranscribeMapleVoice",
+      "Effect": "Allow",
+      "Action": [
+        "transcribe:StartTranscriptionJob",
+        "transcribe:GetTranscriptionJob",
+        "transcribe:DeleteTranscriptionJob"
+      ],
+      "Resource": "*"
     }
   ]
 }

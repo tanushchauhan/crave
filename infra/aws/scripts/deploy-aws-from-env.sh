@@ -314,7 +314,7 @@ if [[ "$SKIP_LAMBDAS" -eq 0 ]]; then
   zip_lambda b2b-chat
 
   upsert_lambda crave-receipt-ocr "$AWS_ROOT/lambdas/receipt-ocr/function.zip" index.handler 1024 60 "$GEN/lambda-env-receipt-ocr.json"
-  upsert_lambda crave-bedrock-proxy "$AWS_ROOT/lambdas/bedrock-proxy/function.zip" index.handler 512 30 "$GEN/lambda-env-bedrock-proxy.json"
+  upsert_lambda crave-bedrock-proxy "$AWS_ROOT/lambdas/bedrock-proxy/function.zip" index.handler 1024 90 "$GEN/lambda-env-bedrock-proxy.json"
   upsert_lambda crave-ad-generate "$AWS_ROOT/lambdas/ad-generate/function.zip" index.handler 1024 90 "$GEN/lambda-env-ad-generate.json"
   upsert_lambda crave-b2b-chat "$AWS_ROOT/lambdas/b2b-chat/function.zip" index.handler 1024 60 "$GEN/lambda-env-b2b-chat.json"
 
@@ -459,6 +459,7 @@ print(next((r['RouteId'] for r in d.get('Items',[]) if r.get('RouteKey')==k), ''
   upsert_route "POST /voice/resolve-group"
   upsert_route "POST /voice/recommend"
   upsert_route "POST /voice/confirm-booking"
+  upsert_route "POST /voice/maple-setup"
   upsert_route "POST /v1/chat/completions"
   upsert_route "POST /v1/responses"
   upsert_route "POST /bedrock/converse"

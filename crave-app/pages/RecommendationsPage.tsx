@@ -19,7 +19,6 @@ import {
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
-import FinishSetupTalkToVoice from "./FinishSetupTalkToVoice";
 import GroupsPage from "./GroupsPage";
 import OrderingPage from "./OrderingPage";
 import ReservationsPage from "./ReservationsPage";
@@ -37,7 +36,6 @@ export default function RecommendationsPage() {
     const [activeTab, setActiveTab] =
         useState<MainAppTabId>("recommendations");
     const [screen, setScreen] = useState<Screen>({ name: "recommendations" });
-    const [voiceOpen, setVoiceOpen] = useState(false);
     const [addGroupModalOpen, setAddGroupModalOpen] = useState(false);
     const [orderModalRestaurant, setOrderModalRestaurant] =
         useState<Restaurant | null>(null);
@@ -89,9 +87,7 @@ export default function RecommendationsPage() {
         };
     }, [screen.name, activeTab]);
 
-    const onVoicePress = useCallback(() => {
-        setVoiceOpen(true);
-    }, []);
+    const onVoicePress = undefined;
 
     const handleTabChange = useCallback((tab: MainAppTabId) => {
         setOrderModalRestaurant(null);
@@ -122,14 +118,6 @@ export default function RecommendationsPage() {
     }, []);
 
     const navHeight = 72;
-
-    if (voiceOpen) {
-        return (
-            <FinishSetupTalkToVoice
-                onFinished={() => setVoiceOpen(false)}
-            />
-        );
-    }
 
     if (screen.name === "ordering") {
         return (

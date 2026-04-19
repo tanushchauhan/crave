@@ -2,12 +2,17 @@ import Waffle from "@/assets/canva/assets/6.svg";
 import AnimatedCookingDots from "@/components/AnimatedCookingDots";
 import LayeredTitle from "@/components/LayeredTitle";
 import { useUserSettings } from "@/context/UserSettingsContext";
+import { postMapleVoiceSetupChunk } from "@/lib/mapleVoiceApi";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
+import { Audio, InterruptionModeIOS } from "expo-av";
+import { readAsStringAsync } from "expo-file-system/legacy";
 import { Mic } from "lucide-react-native";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+    ActivityIndicator,
     Animated,
     Easing,
+    Platform,
     Pressable,
     ScrollView,
     Text,
@@ -19,33 +24,172 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 const MAPLE_GOLD = "#e6b465";
 const MAPLE_SHADOW = "#141c3a";
 const FINISHED_ORANGE = "#f5861f";
+const MUTED = "#6b6b6b";
 
-const NOTE_SAMPLE =
-    "Maple's Notes. Maple's Notes. Maple's Notes. Maple's Notes. Maple's Notes. Maple's Notes.";
+/** Long enough for a phrase; server runs Transcribe + Bedrock (~10–60s). */
+const CHUNK_MS = 9000;
 
-const LIVE_SNIPPETS = [
-    "Heard: you love smoky barbecue notes.",
-    "Saved: avoid extra cilantro.",
-    "Noted: dinner for four on Friday.",
-    "Preference: medium spice only.",
-];
+type SessionLogRow = { id: number; kind: "saved" | "error"; text: string };
 
 type FinishSetupTalkToVoiceProps = {
     onFinished?: () => void;
 };
 
+async function releaseIOSRecordingSession() {
+    if (Platform.OS !== "ios") return;
+    try {
+        await Audio.setAudioModeAsync({
+            allowsRecordingIOS: false,
+            playsInSilentModeIOS: true,
+            staysActiveInBackground: false,
+            interruptionModeIOS: InterruptionModeIOS.MixWithOthers,
+        });
+    } catch {
+        /* ignore */
+    }
+}
+
 export default function FinishSetupTalkToVoice({
     onFinished,
 }: FinishSetupTalkToVoiceProps) {
     const insets = useSafeAreaInsets();
-    const { appendMapleLines } = useUserSettings();
+    const { appendMapleLines, settings, updateSettings } = useUserSettings();
     const [listening, setListening] = useState(false);
-    const [liveNotes, setLiveNotes] = useState<string[]>([]);
-    const snippetIndex = useRef(0);
+    const [sessionLog, setSessionLog] = useState<SessionLogRow[]>([]);
+    const [micError, setMicError] = useState<string | null>(null);
+    const [uploadBusy, setUploadBusy] = useState(false);
+
+    const listeningRef = useRef(false);
+    const recordingRef = useRef<Audio.Recording | null>(null);
+    const chunkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const mapleNotesRef = useRef(settings.mapleNotes);
+    mapleNotesRef.current = settings.mapleNotes;
+    const sessionPreferenceLinesRef = useRef<string[]>([]);
+    const logIdRef = useRef(0);
 
     const pulse1 = useRef(new Animated.Value(0)).current;
     const pulse2 = useRef(new Animated.Value(0)).current;
     const ringScale = useRef(new Animated.Value(1)).current;
+
+    useEffect(() => {
+        sessionPreferenceLinesRef.current = [];
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            void releaseIOSRecordingSession();
+        };
+    }, []);
+
+    const clearChunkTimer = useCallback(() => {
+        if (chunkTimerRef.current) {
+            clearTimeout(chunkTimerRef.current);
+            chunkTimerRef.current = null;
+        }
+    }, []);
+
+    const stopActiveRecording = useCallback(async () => {
+        clearChunkTimer();
+        const r = recordingRef.current;
+        recordingRef.current = null;
+        if (!r) {
+            return null;
+        }
+        try {
+            await r.stopAndUnloadAsync();
+            return r.getURI();
+        } catch {
+            return null;
+        }
+    }, [clearChunkTimer]);
+
+    const appendLogRows = useCallback((rows: SessionLogRow[]) => {
+        if (rows.length === 0) return;
+        setSessionLog((prev) => [...prev, ...rows]);
+    }, []);
+
+    const processAudioUri = useCallback(
+        async (uri: string) => {
+            setUploadBusy(true);
+            try {
+                const b64 = await readAsStringAsync(uri, {
+                    encoding: "base64",
+                });
+                const fmt = Platform.OS === "ios" ? "m4a" : "m4a";
+                const { lines } = await postMapleVoiceSetupChunk({
+                    audioBase64: b64,
+                    mediaFormat: fmt,
+                    existingNotes: mapleNotesRef.current,
+                });
+                if (lines.length > 0) {
+                    appendMapleLines(lines);
+                    for (const line of lines) {
+                        const t = String(line).trim();
+                        if (t) sessionPreferenceLinesRef.current.push(t);
+                    }
+                    const newRows: SessionLogRow[] = lines
+                        .map((l) => String(l).trim())
+                        .filter(Boolean)
+                        .map((text) => {
+                            logIdRef.current += 1;
+                            return { id: logIdRef.current, kind: "saved" as const, text };
+                        });
+                    appendLogRows(newRows);
+                }
+            } catch (e: unknown) {
+                const msg = e instanceof Error ? e.message : "Request failed";
+                logIdRef.current += 1;
+                appendLogRows([{ id: logIdRef.current, kind: "error", text: msg }]);
+            } finally {
+                setUploadBusy(false);
+            }
+        },
+        [appendMapleLines, appendLogRows],
+    );
+
+    const scheduleNextChunk = useCallback(() => {
+        clearChunkTimer();
+        chunkTimerRef.current = setTimeout(() => {
+            void flushChunk();
+        }, CHUNK_MS);
+    }, [clearChunkTimer]);
+
+    const startNewRecording = useCallback(async (): Promise<boolean> => {
+        try {
+            const { recording } = await Audio.Recording.createAsync(
+                Audio.RecordingOptionsPresets.HIGH_QUALITY,
+            );
+            recordingRef.current = recording;
+            scheduleNextChunk();
+            return true;
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : "Could not start recording";
+            setMicError(msg);
+            return false;
+        }
+    }, [scheduleNextChunk]);
+
+    const flushChunk = useCallback(async () => {
+        if (!listeningRef.current) {
+            return;
+        }
+        const uri = await stopActiveRecording();
+        if (uri) {
+            await processAudioUri(uri);
+        }
+        if (!listeningRef.current) {
+            return;
+        }
+        const ok = await startNewRecording();
+        if (!ok) {
+            setListening(false);
+            listeningRef.current = false;
+        }
+    }, [processAudioUri, startNewRecording, stopActiveRecording]);
+
+    useEffect(() => {
+        listeningRef.current = listening;
+    }, [listening]);
 
     useEffect(() => {
         if (!listening) {
@@ -113,14 +257,61 @@ export default function FinishSetupTalkToVoice({
     }, [listening, ringScale]);
 
     useEffect(() => {
-        if (!listening) return;
-        const id = setInterval(() => {
-            const line = LIVE_SNIPPETS[snippetIndex.current % LIVE_SNIPPETS.length]!;
-            snippetIndex.current += 1;
-            setLiveNotes((prev) => [...prev, line]);
-        }, 2400);
-        return () => clearInterval(id);
-    }, [listening]);
+        if (!listening) {
+            return;
+        }
+
+        let cancelled = false;
+
+        void (async () => {
+            setMicError(null);
+            const perm = await Audio.requestPermissionsAsync();
+            if (!perm.granted) {
+                if (!cancelled) {
+                    setMicError("Microphone permission is needed for Maple to listen.");
+                    setListening(false);
+                }
+                return;
+            }
+            await Audio.setAudioModeAsync({
+                allowsRecordingIOS: true,
+                playsInSilentModeIOS: true,
+                staysActiveInBackground: false,
+                interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+            });
+            if (cancelled) {
+                return;
+            }
+            const ok = await startNewRecording();
+            if (!ok && !cancelled) {
+                setListening(false);
+                listeningRef.current = false;
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+            clearChunkTimer();
+        };
+    }, [listening, clearChunkTimer, startNewRecording]);
+
+    useEffect(() => {
+        if (listening) {
+            return undefined;
+        }
+        let cancelled = false;
+        void (async () => {
+            clearChunkTimer();
+            const uri = await stopActiveRecording();
+            if (cancelled || !uri) {
+                return;
+            }
+            await processAudioUri(uri);
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [listening, clearChunkTimer, stopActiveRecording, processAudioUri]);
 
     const makePulseStyle = (value: Animated.Value) => ({
         opacity: value.interpolate({
@@ -137,14 +328,27 @@ export default function FinishSetupTalkToVoice({
         ],
     });
 
-    const handleFinished = () => {
-        if (liveNotes.length > 0) {
-            appendMapleLines(liveNotes);
-        }
+    const handleFinished = useCallback(async () => {
+        listeningRef.current = false;
         setListening(false);
-        setLiveNotes([]);
+        clearChunkTimer();
+        const uri = await stopActiveRecording();
+        if (uri) {
+            await processAudioUri(uri);
+        }
+
+        const preferenceLines = [...sessionPreferenceLinesRef.current];
+        updateSettings({
+            mapleVoiceLastContext: {
+                finishedAt: new Date().toISOString(),
+                preferenceLines,
+            },
+        });
+
+        await releaseIOSRecordingSession();
+        setSessionLog([]);
         onFinished?.();
-    };
+    }, [clearChunkTimer, onFinished, processAudioUri, stopActiveRecording, updateSettings]);
 
     return (
         <View className="flex-1 bg-white">
@@ -152,8 +356,8 @@ export default function FinishSetupTalkToVoice({
                 className="flex-1"
                 contentContainerStyle={{
                     paddingTop: Math.max(insets.top, 16) + 8,
-                    paddingHorizontal: 20,
-                    paddingBottom: 140,
+                    paddingHorizontal: 22,
+                    paddingBottom: 132,
                 }}
                 showsVerticalScrollIndicator={false}
             >
@@ -184,11 +388,20 @@ export default function FinishSetupTalkToVoice({
                     </View>
                 </View>
 
-                <View className="mt-5 items-center">
-                    <Text className="mb-3 font-josefin text-[12px] text-[#666] text-center px-2">
-                        Tap Maple to start or stop listening. Pulses show when she&apos;s
-                        tuned in.
-                    </Text>
+                {micError ? (
+                    <View className="mt-4 rounded-xl bg-red-50 px-3 py-2.5">
+                        <Text className="text-center font-josefin text-[13px] text-red-700">
+                            {micError}
+                        </Text>
+                    </View>
+                ) : null}
+
+                <Text className="mt-5 text-center font-josefin text-[14px] leading-[21px] text-[#444]">
+                    Tap Maple to speak. Every few seconds we send your clip to Maple—new
+                    preferences are saved automatically to Maple&apos;s Notes.
+                </Text>
+
+                <View className="mt-6 items-center">
                     <View className="h-[200px] w-[200px] items-center justify-center">
                         <Animated.View
                             pointerEvents="none"
@@ -203,13 +416,7 @@ export default function FinishSetupTalkToVoice({
                         <Animated.View style={{ transform: [{ scale: ringScale }] }}>
                             <TouchableOpacity
                                 onPress={() => {
-                                    setListening((v) => {
-                                        if (v) {
-                                            setLiveNotes([]);
-                                            snippetIndex.current = 0;
-                                        }
-                                        return !v;
-                                    });
+                                    setListening((v) => !v);
                                 }}
                                 activeOpacity={0.92}
                                 accessibilityRole="button"
@@ -221,7 +428,7 @@ export default function FinishSetupTalkToVoice({
                                 <Waffle width={118} height={128} />
                                 <View
                                     className="absolute bottom-3 right-5 h-10 w-10 items-center justify-center rounded-full bg-[#f5861f]"
-                                    style={{ opacity: listening ? 1 : 0.85 }}
+                                    style={{ opacity: listening ? 1 : 0.88 }}
                                 >
                                     <Mic size={20} color="#ffffff" strokeWidth={2.4} />
                                 </View>
@@ -229,7 +436,7 @@ export default function FinishSetupTalkToVoice({
                         </Animated.View>
                     </View>
 
-                    <View className="mt-4 h-10 items-center justify-center">
+                    <View className="mt-5 min-h-[28px] items-center justify-center">
                         {listening ? (
                             <View className="flex-row items-center gap-3">
                                 <AnimatedCookingDots
@@ -237,70 +444,85 @@ export default function FinishSetupTalkToVoice({
                                     dotSize={7}
                                     gap={5}
                                 />
-                                <Text className="font-josefin-bold text-[14px] text-[#2c2c2c]">
-                                    Listening…
+                                <Text className="font-josefin-bold text-[15px] text-[#2c2c2c]">
+                                    {uploadBusy ? "Saving…" : "Listening"}
                                 </Text>
+                                {uploadBusy ? (
+                                    <ActivityIndicator size="small" color={FINISHED_ORANGE} />
+                                ) : null}
                             </View>
                         ) : (
-                            <Text className="font-josefin text-[12px] text-[#888]">
-                                Paused — tap Maple to speak
+                            <Text className="font-josefin text-[13px]" style={{ color: MUTED }}>
+                                Paused — tap Maple when you are ready
                             </Text>
                         )}
                     </View>
                 </View>
 
-                <View className="mt-8 overflow-hidden rounded-2xl bg-[#ececec] px-3 py-3">
-                    <Text className="font-josefin-bold-italic text-[13px] text-black/50">
-                        Maple&apos;s Notes
+                <View className="mt-8 rounded-2xl border border-[#ececec] bg-[#fafafa] px-4 py-4">
+                    <Text className="font-josefin-bold text-[14px] text-[#2c2c2c]">
+                        This session
                     </Text>
-                    <ScrollView
-                        nestedScrollEnabled
-                        className="mt-2 max-h-[200px]"
-                        showsVerticalScrollIndicator
-                    >
-                        {liveNotes.map((line, i) => (
-                            <View key={`live-${i}`} className="mb-2 flex-row gap-2">
-                                <Text className="font-josefin-bold text-[9px] text-[#f5861f]">
-                                    {"\u2022"}
-                                </Text>
-                                <Text className="flex-1 font-josefin-bold text-[9px] leading-[13px] text-[#333]">
-                                    {line}
-                                </Text>
-                            </View>
-                        ))}
-                        {Array.from({ length: listening ? 3 : 6 }).map((_, i) => (
-                            <View key={`base-${i}`} className="mb-2 flex-row gap-2">
-                                <Text className="font-josefin-bold text-[7px] text-black/50">
-                                    {"\u2022"}
-                                </Text>
-                                <Text className="flex-1 font-josefin-bold text-[7px] leading-[10px] text-black/50">
-                                    {NOTE_SAMPLE}
-                                </Text>
-                            </View>
-                        ))}
-                    </ScrollView>
+                    <Text className="mt-1 font-josefin text-[12px] leading-[18px]" style={{ color: MUTED }}>
+                        New lines show up here as Maple processes each clip.
+                    </Text>
+                    <View className="mt-3 gap-2.5">
+                        {sessionLog.length === 0 ? (
+                            <Text className="font-josefin-italic text-[12px] text-[#aaa]">
+                                Nothing yet — start talking to Maple.
+                            </Text>
+                        ) : (
+                            sessionLog.map((row) => (
+                                <View key={row.id} className="flex-row gap-2.5">
+                                    <Text
+                                        className="mt-0.5 font-josefin-bold text-[11px]"
+                                        style={{
+                                            color: row.kind === "error" ? "#dc2626" : FINISHED_ORANGE,
+                                        }}
+                                    >
+                                        {row.kind === "error" ? "!" : "\u2022"}
+                                    </Text>
+                                    <Text
+                                        className="flex-1 font-josefin text-[13px] leading-[19px]"
+                                        style={{
+                                            color: row.kind === "error" ? "#b91c1c" : "#333",
+                                        }}
+                                    >
+                                        {row.text}
+                                    </Text>
+                                </View>
+                            ))
+                        )}
+                    </View>
                 </View>
             </ScrollView>
 
             <View
-                className="absolute bottom-0 left-0 right-0 border-t border-[#ececec] bg-white px-4 pt-3"
-                style={{ paddingBottom: Math.max(insets.bottom, 12) }}
+                className="absolute bottom-0 left-0 right-0 border-t border-[#ececec] bg-white/95 px-5 pt-3"
+                style={{ paddingBottom: Math.max(insets.bottom, 14) }}
             >
-                <View className="flex-row items-end justify-between gap-3">
-                    <Text className="max-w-[58%] font-josefin-bold text-[8px] leading-[11px] text-black/50">
-                        Press Finished When You Are Satisfied With Maple&apos;s Notetaking
+                <Pressable
+                    onPress={() => void handleFinished()}
+                    disabled={uploadBusy}
+                    className="flex-row items-center justify-center gap-2 rounded-full py-3.5"
+                    style={{
+                        backgroundColor: FINISHED_ORANGE,
+                        opacity: uploadBusy ? 0.65 : 1,
+                    }}
+                >
+                    {uploadBusy ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                        <FontAwesome name="check" size={18} color="white" />
+                    )}
+                    <Text className="font-josefin-bold text-[16px] text-white">
+                        {uploadBusy ? "Saving…" : "Finished"}
                     </Text>
-                    <Pressable
-                        onPress={handleFinished}
-                        className="flex-row items-center gap-2 rounded-full px-5 py-3"
-                        style={{ backgroundColor: FINISHED_ORANGE }}
-                    >
-                        <Text className="font-josefin-bold text-[13px] text-white">
-                            Finished
-                        </Text>
-                        <FontAwesome name="check" size={16} color="white" />
-                    </Pressable>
-                </View>
+                </Pressable>
+                <Text className="mt-2.5 text-center font-josefin text-[11px] leading-[16px]" style={{ color: MUTED }}>
+                    Finished saves a short summary in Settings under Maple&apos;s notes. Your
+                    preferences are already stored after each clip.
+                </Text>
             </View>
         </View>
     );

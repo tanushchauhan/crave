@@ -11,9 +11,16 @@ import {
 
 const STORAGE_KEY = "crave.user.settings.v1";
 
+/** Snapshot from the last completed Maple voice setup session (Settings shows this). */
+export type MapleVoiceLastContext = {
+    finishedAt: string;
+    preferenceLines: string[];
+};
+
 export type UserSettings = {
     profileImageUri: string | null;
     mapleNotes: string;
+    mapleVoiceLastContext: MapleVoiceLastContext | null;
     appleMapsEnabled: boolean;
     cameraEnabled: boolean;
     microphoneEnabled: boolean;
@@ -24,6 +31,7 @@ const DEFAULT_SETTINGS: UserSettings = {
     profileImageUri: null,
     mapleNotes:
         "Maple learns your tastes over time. Notes from voice sessions will appear here.",
+    mapleVoiceLastContext: null,
     appleMapsEnabled: true,
     cameraEnabled: true,
     microphoneEnabled: true,
@@ -48,7 +56,17 @@ async function loadSettings(): Promise<UserSettings> {
         const raw = await AsyncStorage.getItem(STORAGE_KEY);
         if (!raw) return DEFAULT_SETTINGS;
         const parsed = JSON.parse(raw) as Partial<UserSettings>;
-        return { ...DEFAULT_SETTINGS, ...parsed };
+        const merged = { ...DEFAULT_SETTINGS, ...parsed };
+        const ctx = merged.mapleVoiceLastContext;
+        if (
+            !ctx ||
+            typeof ctx !== "object" ||
+            typeof (ctx as MapleVoiceLastContext).finishedAt !== "string" ||
+            !Array.isArray((ctx as MapleVoiceLastContext).preferenceLines)
+        ) {
+            merged.mapleVoiceLastContext = null;
+        }
+        return merged;
     } catch {
         return DEFAULT_SETTINGS;
     }

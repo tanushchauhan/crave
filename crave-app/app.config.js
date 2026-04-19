@@ -34,6 +34,9 @@ module.exports = {
             NSLocationWhenInUseUsageDescription:
                 expo.ios?.infoPlist?.NSLocationWhenInUseUsageDescription ??
                 LOCATION_WHEN_IN_USE,
+            NSMicrophoneUsageDescription:
+                expo.ios?.infoPlist?.NSMicrophoneUsageDescription ??
+                "Maple can listen while you describe your dining preferences during setup.",
         },
     },
     extra: {
@@ -43,6 +46,18 @@ module.exports = {
         supabaseAnonKey:
             process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
             process.env.SUPABASE_ANON_KEY ||
+            "",
+        craveAwsApiBase:
+            process.env.EXPO_PUBLIC_CRAVE_AWS_API_BASE ||
+            process.env.CRAVE_AWS_API_BASE ||
+            "",
+        elevenLabsAgentId:
+            process.env.EXPO_PUBLIC_ELEVENLABS_AGENT_ID ||
+            process.env.ELEVENLABS_AGENT_ID ||
+            "",
+        elevenLabsApiKey:
+            process.env.EXPO_PUBLIC_ELEVENLABS_API_KEY ||
+            process.env.ELEVENLABS_API_KEY ||
             "",
     },
 };

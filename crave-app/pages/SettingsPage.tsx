@@ -4,7 +4,11 @@ import MainAppBottomNav, {
 import MainAppPageHeader from "@/components/MainAppPageHeader";
 import RipplePressable from "@/components/RipplePressable";
 import VoiceAssistantFab from "@/components/VoiceAssistantFab";
-import { useUserSettings } from "@/context/UserSettingsContext";
+import {
+    useUserSettings,
+    type MapleVoiceLastContext,
+} from "@/context/UserSettingsContext";
+import { clearSetupCompleteMarker, SETUP_COMPLETE_STORAGE_KEY } from "@/lib/setupGate";
 import { supabase } from "@/lib/supabase";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import * as ImagePicker from "expo-image-picker";
@@ -33,6 +37,59 @@ type SettingsPageProps = {
     onTabChange: (tab: MainAppTabId) => void;
     onVoicePress?: () => void;
 };
+
+function formatVoiceSessionWhen(iso: string): string {
+    try {
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) {
+            return iso;
+        }
+        return d.toLocaleString(undefined, {
+            dateStyle: "medium",
+            timeStyle: "short",
+        });
+    } catch {
+        return iso;
+    }
+}
+
+function MapleVoiceLastSessionCard({ ctx }: { ctx: MapleVoiceLastContext }) {
+    return (
+        <View className="mt-3 overflow-hidden rounded-2xl border border-[#ffe4cc] bg-[#fffaf5] px-4 py-3.5">
+            <Text className="font-josefin-bold text-[12px]" style={{ color: ORANGE }}>
+                Last voice session
+            </Text>
+            <Text className="mt-1 font-josefin text-[11px] text-[#888]">
+                {formatVoiceSessionWhen(ctx.finishedAt)}
+            </Text>
+            {ctx.preferenceLines.length > 0 ? (
+                <View className="mt-2.5 gap-1.5">
+                    {ctx.preferenceLines.map((line, i) => (
+                        <View key={`${i}-${line.slice(0, 24)}`} className="flex-row gap-2">
+                            <Text
+                                className="mt-0.5 font-josefin-bold text-[10px]"
+                                style={{ color: ORANGE }}
+                            >
+                                {"\u2022"}
+                            </Text>
+                            <Text className="flex-1 font-josefin text-[12px] leading-[17px] text-[#3d3d3d]">
+                                {line}
+                            </Text>
+                        </View>
+                    ))}
+                </View>
+            ) : (
+                <Text className="mt-2 font-josefin text-[11px] leading-[16px] text-[#888]">
+                    No new lines that time — your notes above may already include what Maple
+                    heard.
+                </Text>
+            )}
+            <Text className="mt-2.5 font-josefin text-[10px] leading-[15px] text-[#aaa]">
+                Same preferences are merged into Maple&apos;s notes below.
+            </Text>
+        </View>
+    );
+}
 
 function accountLabelFromUser(user: {
     phone?: string | null;
@@ -223,6 +280,9 @@ export default function SettingsPage({
                     Preferences captured from Maple (voice sessions) are stored here. Edit
                     anytime — this is what Crave uses to personalize suggestions.
                 </Text>
+                {settings.mapleVoiceLastContext ? (
+                    <MapleVoiceLastSessionCard ctx={settings.mapleVoiceLastContext} />
+                ) : null}
                 <TextInput
                     value={settings.mapleNotes}
                     onChangeText={(t) => updateSettings({ mapleNotes: t })}
@@ -270,6 +330,37 @@ export default function SettingsPage({
                     />
                 </View>
 
+                {__DEV__ ? (
+                    <View className="mt-6 overflow-hidden rounded-2xl border border-amber-200/80 bg-amber-50/90 px-4 py-3">
+                        <Text className="font-josefin-bold text-[12px] text-amber-900">
+                            Developer
+                        </Text>
+                        <Text className="mt-2 font-josefin text-[11px] text-[#5c4a2a]">
+                            First-run setup uses AsyncStorage key{" "}
+                            <Text className="font-josefin-bold">{SETUP_COMPLETE_STORAGE_KEY}</Text>
+                            {" — "}set to the string{" "}
+                            <Text className="font-josefin-bold">1</Text>
+                            {
+                                " when finished. There is no 0: we delete the key to reset. While signed in, that shows Finish Setup again. For the phone onboarding slides (welcome + tip), use Log out."
+                            }
+                        </Text>
+                        <TouchableOpacity
+                            activeOpacity={0.88}
+                            className="mt-3 items-center rounded-xl bg-amber-200/80 py-2.5"
+                            onPress={() => {
+                                void (async () => {
+                                    await clearSetupCompleteMarker();
+                                    router.replace("/");
+                                })();
+                            }}
+                        >
+                            <Text className="font-josefin-bold text-[12px] text-amber-950">
+                                Clear first-run setup flag
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
+                ) : null}
+
                 <RipplePressable
                     borderRadius={16}
                     className="mt-6 flex-row items-center justify-center gap-2 bg-[#ececec] py-3.5"
@@ -283,7 +374,7 @@ export default function SettingsPage({
             </ScrollView>
 
             <VoiceAssistantFab
-                onPress={onVoicePress ?? (() => {})}
+                onPress={onVoicePress}
                 style={{ bottom: insets.bottom + navHeight + 8 }}
             />
 
