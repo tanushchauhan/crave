@@ -129,12 +129,17 @@ Deno.serve(async (req) => {
         req,
     );
 
-    const rpcArgs: Record<string, unknown> = { p_limit: limit };
-    if (p_lat !== null && p_lng !== null) {
-        rpcArgs.p_lat = p_lat;
-        rpcArgs.p_lng = p_lng;
-        rpcArgs.p_radius_m = p_radius_m ?? DEFAULT_RADIUS_M;
-    }
+    // Always pass all four keys so PostgREST matches the (integer, float8, float8, float8) overload;
+    // omitting geo keys led to "function ... (p_lat, p_limit, p_lng, p_radius_m) not in schema cache" on some hosts.
+    const rpcArgs = {
+        p_limit: limit,
+        p_lat: p_lat,
+        p_lng: p_lng,
+        p_radius_m:
+            p_lat !== null && p_lng !== null
+                ? (p_radius_m ?? DEFAULT_RADIUS_M)
+                : null,
+    };
 
     const { data: rows, error: rpcErr } = await supabase.rpc(
         "recommend_restaurants_for_user",
