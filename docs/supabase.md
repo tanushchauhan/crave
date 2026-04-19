@@ -181,7 +181,13 @@ Suggested sequence (migration names are examples):
 | 10 | `20260418000010_chatbot_rpcs.sql` | `assert_restaurant_owner` + B2B read RPCs (`get_booking_summary`, etc.). |
 | 11 | `20260418000011_orders_and_lines.sql` | `orders`, `order_items`, order RLS, **`ALTER PUBLICATION … ADD TABLE public.orders`** for the **orders** half of Live Bookings and Orders. |
 | 12 | `20260418000012_rename_pref_update_swipe_to_onboarding.sql` | No-op on fresh installs; renames enum label `swipe` → `onboarding` if an older DB still has `swipe`. |
-| 13 | `20260419150000_register_restaurant_on_signup.sql` | **`register_restaurant_on_signup(p_restaurant_name text)`** — `SECURITY DEFINER` RPC for B2B signup: insert or claim **`restaurants`** row for **`auth.uid()`** (RLS does not allow raw client insert/claim). `GRANT EXECUTE` to **`authenticated`**. |
+| 13 | `20260419113328_get_dashboard_kpis.sql` | **`get_dashboard_kpis(p_restaurant_id uuid)`** → JSON for the B2B KPI strip (`SECURITY DEFINER`; **`assert_restaurant_owner`**). `GRANT EXECUTE` to **`authenticated`**. |
+| 14 | `20260419113333_menu_items_metadata_and_realtime.sql` | **`menu_items.metadata`** (`jsonb`); add **`menu_items`** to **`supabase_realtime`** (Live Menu Management). |
+| 15 | `20260419113334_realtime_item_feedback.sql` | Add **`item_feedback`** to **`supabase_realtime`** (menu performance live refresh). |
+| 16 | `20260419113345_get_dashboard_kpis.sql` | Idempotent **`CREATE OR REPLACE`** for **`get_dashboard_kpis`** — matches a duplicate migration name some hosted projects record after repeated MCP applies. |
+| 17 | `20260419150000_register_restaurant_on_signup.sql` | **`register_restaurant_on_signup(p_restaurant_name text)`** — `SECURITY DEFINER` RPC for B2B signup: insert or claim **`restaurants`** row for **`auth.uid()`** (RLS does not allow raw client insert/claim). `GRANT EXECUTE` to **`authenticated`**. Hosted **`list_migrations`** may instead show **`20260419094631_register_restaurant_on_signup`** from an earlier align migration — use **`supabase migration repair`** if local filenames and remote versions diverge. |
+
+**Older clones:** if the host still lists no-op migrations named **`20260419113328_remote_history_placeholder`** (or the `…13333…` / `…13334…` / `…13345…` siblings), run **`supabase migration repair`** so remote history matches these canonical filenames, then **`db push`**.
 
 ### 5.1 PostGIS availability
 
@@ -313,6 +319,7 @@ create table public.menu_items (
   embedding vector (1536),
   image_embedding vector (1024),
   is_available boolean not null default true,
+  metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
 
@@ -664,6 +671,11 @@ Optional (if built):
 
 - **`group_votes`** (not in section 7 DDL — add a migration if implementing live voting).
 
+Also published for B2B (see rows 14–15 in [§5 migration table](#5-extensions-and-migration-sequencing)):
+
+- **`menu_items`** — Live Menu Management (`crave-b2b` subscribes with `restaurant_id=eq.<uuid>`).
+- **`item_feedback`** — Menu Performance table can refetch when feedback changes.
+
 ### 9.2 Publication SQL
 
 In the repo this is split across migrations so `orders` exists before it is published:
@@ -675,6 +687,8 @@ alter publication supabase_realtime add table public.bookings;
 -- 20260418000011_orders_and_lines.sql (after `orders` is created)
 alter publication supabase_realtime add table public.orders;
 ```
+
+`menu_items` and `item_feedback` are added in **`20260419113333_menu_items_metadata_and_realtime.sql`** and **`20260419113334_realtime_item_feedback.sql`** (publication `ADD TABLE` wrapped so repeat runs do not error).
 
 If Supabase version requires `replica identity full` for certain filters, consult `search_docs` for current guidance.
 

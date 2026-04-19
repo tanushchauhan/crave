@@ -1,1 +1,0 @@
--- Placeholder: version applied on hosted Supabase before local repo history; no-op to align migration checksums.
