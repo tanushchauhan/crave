@@ -60,12 +60,22 @@ function bearerToken(authHeader) {
   return m ? m[1] : authHeader.trim();
 }
 
+/**
+ * Parse data:image/...;base64,... including optional parameters (e.g. charset)
+ * before the base64 payload. Strict /^data:[^;]+;base64,/ fails on
+ * data:image/jpeg;charset=UTF-8;base64,... and breaks Bedrock image input.
+ */
 function decodeDataUrl(url) {
   if (typeof url !== "string") return null;
-  const m = url.match(/^data:([^;]+);base64,(.+)$/is);
-  if (!m) return null;
-  const mime = m[1].trim().toLowerCase();
-  let b64 = m[2].replace(/\s/g, "");
+  const compact = url.replace(/\s/g, "");
+  const marker = ";base64,";
+  const mi = compact.toLowerCase().indexOf(marker);
+  if (mi === -1) return null;
+  const header = compact.slice(0, mi);
+  const hm = header.match(/^data:(.+)$/i);
+  if (!hm) return null;
+  const mime = hm[1].split(";")[0].trim().toLowerCase();
+  let b64 = compact.slice(mi + marker.length);
   const pad = b64.length % 4;
   if (pad) b64 += "=".repeat(4 - pad);
   try {
@@ -156,10 +166,15 @@ function contentToBlocks(content) {
         (typeof f.mime_type === "string" &&
           f.mime_type.toLowerCase().includes("pdf"));
       if (buf && isPdf && buf.length > 0 && buf.length <= MAX_DOC_BYTES) {
+        const safeName =
+          String(name)
+            .replace(/[^\w.\-]+/g, "_")
+            .replace(/_+/g, "_")
+            .slice(0, 80) || "upload.pdf";
         blocks.push({
           document: {
             format: "pdf",
-            name: name.slice(0, 80),
+            name: safeName,
             source: { bytes: buf },
           },
         });
