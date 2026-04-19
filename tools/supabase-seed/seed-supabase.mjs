@@ -2,6 +2,9 @@
  * CRAVE Supabase demo seed (UT Austin near campus).
  * Run from tools/supabase-seed: npm install && npm run seed
  *
+ * Backfill existing rows with missing demo fields (without touching image_embedding,
+ * yelp_id, owner_user_id): npm run fill-blanks [--dry-run] [--no-embeddings]
+ *
  * Env (repo-root .env or tools/supabase-seed/.env):
  *   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
  *   AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (+ AWS_SESSION_TOKEN if temp creds)
@@ -15,6 +18,12 @@ import { createHash } from "node:crypto";
 
 import { createClient } from "@supabase/supabase-js";
 import { BedrockRuntimeClient, InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
+
+import {
+  defaultDemoHours,
+  pickDemoPhotos,
+  syntheticPhoneE164,
+} from "./lib/restaurant-dummies.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -255,15 +264,16 @@ async function upsertRestaurant(supabase, row, embedding) {
     .eq("google_place_id", row.google_place_id)
     .maybeSingle();
 
+  const stableKey = row.google_place_id || row.name;
   const base = {
     name: row.name,
     cuisine_tags: row.cuisine_tags,
     price_tier: row.price_tier,
-    hours: {},
-    photo_urls: [],
+    hours: defaultDemoHours(),
+    photo_urls: pickDemoPhotos(stableKey, 3),
     yelp_id: null,
     google_place_id: row.google_place_id,
-    phone_e164: row.phone_e164,
+    phone_e164: row.phone_e164 || syntheticPhoneE164(stableKey),
     is_crave_partner: row.is_crave_partner,
     owner_user_id: row.owner_user_id,
     embedding: embedding ? vecToPgLiteral(embedding) : null,
