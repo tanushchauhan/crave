@@ -6,6 +6,16 @@ export type LiveBookingTableRow = {
   size: string;
   date: string;
   time: string;
+  /** Sort key and pagination cursor (UTC epoch ms) */
+  atMs: number;
+};
+
+export type DashboardKpi = {
+  label: string;
+  value: string;
+  delta: string;
+  deltaPositive: boolean;
+  caption: string;
 };
 
 export type MenuPerformanceTableRow = {

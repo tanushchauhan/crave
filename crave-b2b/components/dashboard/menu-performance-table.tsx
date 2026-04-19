@@ -1,15 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowDownUp,
   ArrowUp,
+  ChevronLeft,
+  ChevronRight,
   ThumbsDown,
   ThumbsUp,
 } from "lucide-react";
 import { Popover as PopoverPrimitive } from "radix-ui";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -21,12 +24,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { DashboardShowMore } from "@/components/dashboard/dashboard-show-more";
 import { MiniTrendSparkline } from "@/components/dashboard/mini-trend-sparkline";
 import type { MenuPerformanceTableRow } from "@/lib/dashboard/types";
+import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 const colCount = 5;
+/** Rows per page (matches previous “show more” step) */
+const PAGE_SIZE = 8;
 
 function parseRatePercent(rate: string): number {
   const n = Number.parseFloat(rate.replace("%", "").trim());
@@ -56,21 +61,81 @@ function ariaSortValue(dir: SortDir): "ascending" | "descending" | "none" {
 
 export type MenuPerformanceTableProps = {
   rows: MenuPerformanceTableRow[];
+  restaurantId: string | null;
 };
 
-export function MenuPerformanceTable({ rows: sourceRows }: MenuPerformanceTableProps) {
+export function MenuPerformanceTable({ rows: sourceRows, restaurantId }: MenuPerformanceTableProps) {
+  const [rows, setRows] = useState<MenuPerformanceTableRow[]>(sourceRows);
+  const [pageIndex, setPageIndex] = useState(0);
   const [foodFilter, setFoodFilter] = useState("");
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const rows = useMemo(
-    () => sourceRows.map((r, defaultOrder) => ({ ...r, defaultOrder })),
-    [sourceRows],
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      setRows(sourceRows);
+      setPageIndex(0);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [sourceRows]);
+
+  useEffect(() => {
+    setPageIndex(0);
+  }, [foodFilter, sortKey, sortDir]);
+
+  const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleMenuRefetch = useCallback(() => {
+    if (refetchTimer.current) clearTimeout(refetchTimer.current);
+    refetchTimer.current = setTimeout(async () => {
+      refetchTimer.current = null;
+      setRefreshing(true);
+      try {
+        const res = await fetch("/api/dashboard/menu-performance");
+        const data = (await res.json()) as { rows?: MenuPerformanceTableRow[] };
+        if (res.ok && Array.isArray(data.rows)) {
+          setRows(data.rows);
+        }
+      } catch {
+        /* ignore */
+      } finally {
+        setRefreshing(false);
+      }
+    }, 500);
+  }, []);
+
+  useEffect(() => {
+    if (!restaurantId) return;
+    const supabase = createBrowserSupabaseClient();
+    const handler = () => scheduleMenuRefetch();
+    const channel = supabase
+      .channel(`dashboard-menu-${restaurantId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "item_feedback", filter: `restaurant_id=eq.${restaurantId}` },
+        handler,
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "orders", filter: `restaurant_id=eq.${restaurantId}` },
+        handler,
+      )
+      .subscribe();
+
+    return () => {
+      if (refetchTimer.current) clearTimeout(refetchTimer.current);
+      void supabase.removeChannel(channel);
+    };
+  }, [restaurantId, scheduleMenuRefetch]);
+
+  const rowsWithOrder = useMemo(
+    () => rows.map((r, defaultOrder) => ({ ...r, defaultOrder })),
+    [rows],
   );
 
-  const displayedRows = useMemo(() => {
+  const sortedFiltered = useMemo(() => {
     const q = foodFilter.trim().toLowerCase();
-    let list = rows.filter((r) => {
+    let list = rowsWithOrder.filter((r) => {
       if (q === "") return true;
       return r.item.toLowerCase().includes(q);
     });
@@ -92,7 +157,27 @@ export function MenuPerformanceTable({ rows: sourceRows }: MenuPerformanceTableP
     }
 
     return list;
-  }, [rows, foodFilter, sortKey, sortDir]);
+  }, [rowsWithOrder, foodFilter, sortKey, sortDir]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedFiltered.length / PAGE_SIZE));
+
+  useEffect(() => {
+    setPageIndex((p) => Math.min(p, totalPages - 1));
+  }, [totalPages]);
+
+  const displayedRows = useMemo(
+    () =>
+      sortedFiltered.slice(pageIndex * PAGE_SIZE, (pageIndex + 1) * PAGE_SIZE),
+    [sortedFiltered, pageIndex],
+  );
+
+  const rangeStart = sortedFiltered.length === 0 ? 0 : pageIndex * PAGE_SIZE + 1;
+  const rangeEnd = Math.min(sortedFiltered.length, (pageIndex + 1) * PAGE_SIZE);
+
+  const onPrevPage = () => setPageIndex((p) => Math.max(0, p - 1));
+  const onNextPage = () => setPageIndex((p) => Math.min(totalPages - 1, p + 1));
+
+  const showPaginationFooter = sortedFiltered.length > 0;
 
   function cycleSort(key: SortKey) {
     if (sortKey !== key) {
@@ -127,7 +212,7 @@ export function MenuPerformanceTable({ rows: sourceRows }: MenuPerformanceTableP
                       className={cn(
                         "inline-flex w-full items-center gap-1.5 rounded-md font-semibold text-dark",
                         "cursor-pointer text-left outline-none",
-                        "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40"
+                        "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40",
                       )}
                       aria-label="Filter food item"
                     >
@@ -142,7 +227,7 @@ export function MenuPerformanceTable({ rows: sourceRows }: MenuPerformanceTableP
                       className={cn(
                         "z-50 w-[min(calc(100vw-2rem),280px)] rounded-lg border border-brand/25 bg-white p-3 shadow-md",
                         "data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95",
-                        "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
+                        "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
                       )}
                     >
                       <div className="flex flex-col gap-2">
@@ -173,7 +258,7 @@ export function MenuPerformanceTable({ rows: sourceRows }: MenuPerformanceTableP
                   className={cn(
                     "inline-flex items-center gap-1.5 font-semibold text-dark",
                     "cursor-pointer rounded-md outline-none",
-                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40"
+                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40",
                   )}
                 >
                   Order Rate
@@ -189,7 +274,7 @@ export function MenuPerformanceTable({ rows: sourceRows }: MenuPerformanceTableP
                   onClick={() => cycleSort("likes")}
                   className={cn(
                     "inline-flex w-full items-center justify-center gap-1 rounded-md py-0.5 outline-none",
-                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40"
+                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40",
                   )}
                   aria-label="Likes, sort column"
                 >
@@ -206,7 +291,7 @@ export function MenuPerformanceTable({ rows: sourceRows }: MenuPerformanceTableP
                   onClick={() => cycleSort("dislikes")}
                   className={cn(
                     "inline-flex w-full items-center justify-center gap-1 rounded-md py-0.5 outline-none",
-                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40"
+                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40",
                   )}
                   aria-label="Dislikes, sort column"
                 >
@@ -224,7 +309,7 @@ export function MenuPerformanceTable({ rows: sourceRows }: MenuPerformanceTableP
                   colSpan={colCount}
                   className="py-10 text-center text-sm text-gray-dark"
                 >
-                  No menu items yet, or performance data is still loading.
+                  {refreshing ? "Refreshing…" : "No menu items yet, or performance data is still loading."}
                 </TableCell>
               </TableRow>
             ) : (
@@ -249,11 +334,55 @@ export function MenuPerformanceTable({ rows: sourceRows }: MenuPerformanceTableP
             )}
           </TableBody>
           <TableFooter className="border-0 bg-transparent p-0 hover:bg-transparent">
-            <TableRow className="border-0 hover:bg-transparent">
-              <TableCell colSpan={colCount} className="p-0">
-                <DashboardShowMore />
-              </TableCell>
-            </TableRow>
+            {showPaginationFooter ? (
+              <TableRow className="border-0 hover:bg-transparent">
+                <TableCell colSpan={colCount} className="p-0">
+                  <div
+                    className="flex flex-col gap-0 border-t border-brand/15 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4 sm:py-3"
+                    role="navigation"
+                    aria-label="Menu performance pagination"
+                  >
+                    <p className="order-2 px-4 py-2 text-center text-xs text-gray-dark sm:order-1 sm:px-0 sm:py-0 sm:text-left sm:text-sm">
+                      Showing{" "}
+                      <span className="font-semibold text-dark">
+                        {rangeStart}–{rangeEnd}
+                      </span>{" "}
+                      of{" "}
+                      <span className="font-semibold text-dark">{sortedFiltered.length}</span>
+                    </p>
+                    <div className="order-1 flex items-center justify-center gap-2 sm:order-2 sm:justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="min-w-[5.5rem] border-brand/40 font-semibold text-dark hover:bg-light/80"
+                        onClick={onPrevPage}
+                        disabled={pageIndex <= 0 || refreshing}
+                        aria-label="Previous page"
+                      >
+                        <ChevronLeft className="size-4" aria-hidden />
+                        Previous
+                      </Button>
+                      <span className="min-w-[6rem] text-center text-sm font-semibold tabular-nums text-dark">
+                        Page {pageIndex + 1} of {totalPages}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="min-w-[5.5rem] border-brand/40 font-semibold text-dark hover:bg-light/80"
+                        onClick={onNextPage}
+                        disabled={pageIndex >= totalPages - 1 || refreshing}
+                        aria-label="Next page"
+                      >
+                        Next
+                        <ChevronRight className="size-4" aria-hidden />
+                      </Button>
+                    </div>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ) : null}
           </TableFooter>
         </Table>
       </CardContent>

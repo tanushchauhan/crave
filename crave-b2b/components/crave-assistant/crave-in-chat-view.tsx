@@ -1,51 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { CircleUser, Menu, PanelLeftClose, Search } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Bot, CircleUser, FileText, Menu, PanelLeftClose, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { ChatSearchBar } from "@/components/crave-assistant/chat-search-bar";
 import { cn } from "@/lib/utils";
+import {
+  buildInitialUserTurn,
+  type ApiChatMessage,
+  type UserContentPart,
+  type UserFilePart,
+  type UserImagePart,
+  type UserTextPart,
+} from "@/lib/b2b-chat/multipart-messages";
 
 const SIDEBAR_W = 280;
-
-const assistantCopy = (
-  <div className="space-y-4 text-[0.95rem] leading-relaxed text-dark sm:text-base">
-    <p className="font-bold">Global UI &amp; Layout Attributes</p>
-    <p>
-      This chat surface uses a fixed header, a collapsible brand sidebar for
-      conversation history, and a scrollable transcript with a pinned composer
-      at the bottom of the viewport.
-    </p>
-    <p className="font-bold">1. Top Header (Fixed)</p>
-    <ul className="list-disc space-y-2 pl-5">
-      <li>
-        Full-width <span className="font-semibold">brand</span> bar with the
-        Crave wordmark and account affordance.
-      </li>
-      <li>
-        Height aligns with the global navbar; content below starts on a white
-        canvas.
-      </li>
-    </ul>
-    <p className="font-bold">2. Sidebar (Collapsible)</p>
-    <ul className="list-disc space-y-2 pl-5">
-      <li>
-        Expanded width uses solid brand background with a high-contrast &quot;New
-        Chat&quot; pill and in-sidebar search.
-      </li>
-      <li>
-        Width animates with <span className="font-semibold">ease-in-out</span>{" "}
-        timing for smooth open and close.
-      </li>
-    </ul>
-    <p className="font-bold">3. Composer (Pinned)</p>
-    <ul className="list-disc space-y-2 pl-5">
-      <li>
-        Pill-shaped field with orange border, soft shadow, mic and add actions.
-      </li>
-    </ul>
-  </div>
-);
 
 const convoItems = Array.from({ length: 12 }, (_, i) => ({
   id: i,
@@ -53,13 +22,71 @@ const convoItems = Array.from({ length: 12 }, (_, i) => ({
   active: i === 0,
 }));
 
+type ChatTurn = ApiChatMessage;
+
 type CraveInChatViewProps = {
   initialUserMessage: string;
+  initialUserParts?: UserContentPart[];
 };
 
-export function CraveInChatView({ initialUserMessage }: CraveInChatViewProps) {
+function UserBubbleBody({ content }: { content: string | UserContentPart[] }) {
+  if (typeof content === "string") {
+    return (
+      <p className="whitespace-pre-wrap break-words leading-relaxed">{content}</p>
+    );
+  }
+  const texts = content
+    .filter((p): p is UserTextPart => p.type === "text")
+    .map((p) => p.text);
+  const imgs = content.filter((p): p is UserImagePart => p.type === "image_url");
+  const pdfs = content.filter((p): p is UserFilePart => p.type === "file");
+  return (
+    <div className="space-y-2">
+      {texts.length > 0 ? (
+        <p className="whitespace-pre-wrap break-words leading-relaxed">{texts.join("\n")}</p>
+      ) : null}
+      {imgs.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {imgs.map((p, i) => (
+            // eslint-disable-next-line @next/next/no-img-element -- data URLs from user upload
+            <img
+              key={i}
+              src={p.image_url.url}
+              alt=""
+              className="max-h-44 max-w-[11rem] rounded-lg border border-white/40 object-cover shadow-sm"
+            />
+          ))}
+        </div>
+      ) : null}
+      {pdfs.length > 0 ? (
+        <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs font-medium text-dark/85">
+          {pdfs.map((p, i) => (
+            <li key={i} className="flex items-center gap-1">
+              <FileText className="size-3.5 shrink-0" aria-hidden />
+              {p.file.filename}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+export function CraveInChatView({
+  initialUserMessage,
+  initialUserParts = [],
+}: CraveInChatViewProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [composerEntered, setComposerEntered] = useState(false);
+  const [messages, setMessages] = useState<ChatTurn[]>(() => {
+    const t = initialUserMessage.trim();
+    const p = initialUserParts ?? [];
+    if (!t && p.length === 0) return [];
+    return [buildInitialUserTurn(initialUserMessage, p)];
+  });
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const transcriptEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const id = requestAnimationFrame(() => {
@@ -68,13 +95,63 @@ export function CraveInChatView({ initialUserMessage }: CraveInChatViewProps) {
     return () => cancelAnimationFrame(id);
   }, []);
 
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, pending, error]);
+
+  async function runCompletion(thread: ChatTurn[], signal?: AbortSignal) {
+    setError(null);
+    setPending(true);
+    try {
+      const res = await fetch("/api/b2b-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: thread }),
+        signal,
+      });
+      const text = await res.text();
+      if (signal?.aborted) return;
+      let data: unknown;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(text.slice(0, 280) || "Invalid JSON from assistant");
+      }
+      if (!res.ok) {
+        const err =
+          typeof data === "object" && data !== null && "error" in data
+            ? String((data as { error: unknown }).error)
+            : res.statusText;
+        throw new Error(err);
+      }
+      const choice = (data as { choices?: Array<{ message?: { content?: string } }> }).choices?.[0];
+      const reply = choice?.message?.content?.trim() || "(No text in reply.)";
+      setMessages([...thread, { role: "assistant", content: reply }]);
+    } catch (e) {
+      if (e instanceof Error && e.name === "AbortError") return;
+      setError(e instanceof Error ? e.message : "Request failed");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  useEffect(() => {
+    const t = initialUserMessage.trim();
+    const p = initialUserParts ?? [];
+    if (!t && p.length === 0) return;
+    const ac = new AbortController();
+    void runCompletion([buildInitialUserTurn(initialUserMessage, p)], ac.signal);
+    return () => ac.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- bootstrap once per mount (keyed by parent)
+  }, []);
+
   return (
     <div className="flex h-full min-h-0 w-full overflow-hidden bg-white font-sans">
       <aside
         id="crave-chat-sidebar"
         className={cn(
           "flex shrink-0 flex-col overflow-hidden bg-brand transition-[width] duration-300 ease-in-out motion-reduce:transition-none",
-          sidebarOpen ? "shadow-md" : "shadow-none"
+          sidebarOpen ? "shadow-md" : "shadow-none",
         )}
         style={{ width: sidebarOpen ? SIDEBAR_W : 0 }}
         aria-hidden={!sidebarOpen}
@@ -105,7 +182,7 @@ export function CraveInChatView({ initialUserMessage }: CraveInChatViewProps) {
                 type="button"
                 className={cn(
                   "w-full rounded-lg px-3 py-2.5 text-left text-sm text-white transition-colors",
-                  item.active ? "bg-white/20 font-medium" : "hover:bg-white/10"
+                  item.active ? "bg-white/20 font-medium" : "hover:bg-white/10",
                 )}
               >
                 {item.label}
@@ -137,21 +214,50 @@ export function CraveInChatView({ initialUserMessage }: CraveInChatViewProps) {
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4 sm:px-6">
-          <div className="mx-auto flex max-w-3xl flex-col gap-6 lg:max-w-4xl">
-            <div className="flex flex-row-reverse items-end gap-2 pt-1">
-              <CircleUser
-                className="size-9 shrink-0 text-dark"
-                strokeWidth={1.75}
-                aria-hidden
-              />
+          <div className="mx-auto flex max-w-3xl flex-col gap-5 lg:max-w-4xl">
+            {messages.map((m, i) => (
               <div
-                className="max-w-[min(100%,28rem)] rounded-2xl bg-light px-4 py-3 text-sm text-dark sm:text-base"
-                role="status"
+                key={`${i}-${m.role}`}
+                className={cn(
+                  "flex gap-2 pt-0.5",
+                  m.role === "user" ? "flex-row-reverse items-end" : "flex-row items-start",
+                )}
               >
-                {initialUserMessage}
+                {m.role === "user" ? (
+                  <CircleUser className="size-9 shrink-0 text-dark" strokeWidth={1.75} aria-hidden />
+                ) : (
+                  <Bot className="size-9 shrink-0 text-brand" strokeWidth={1.75} aria-hidden />
+                )}
+                <div
+                  className={cn(
+                    "max-w-[min(100%,28rem)] rounded-2xl px-4 py-3 text-sm sm:text-base",
+                    m.role === "user"
+                      ? "bg-light text-dark"
+                      : "border border-light bg-white text-dark shadow-sm",
+                  )}
+                >
+                  {m.role === "user" ? (
+                    <UserBubbleBody content={m.content} />
+                  ) : (
+                    <p className="whitespace-pre-wrap break-words leading-relaxed">
+                      {typeof m.content === "string" ? m.content : ""}
+                    </p>
+                  )}
+                </div>
               </div>
-            </div>
-            <div className="text-dark">{assistantCopy}</div>
+            ))}
+            {pending && (
+              <div className="flex items-start gap-2 text-sm text-gray-500">
+                <Bot className="size-9 shrink-0 text-brand/60" strokeWidth={1.75} aria-hidden />
+                <span className="pt-2">Thinking…</span>
+              </div>
+            )}
+            {error && (
+              <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                {error}
+              </p>
+            )}
+            <div ref={transcriptEndRef} />
           </div>
         </div>
 
@@ -160,11 +266,21 @@ export function CraveInChatView({ initialUserMessage }: CraveInChatViewProps) {
             "shrink-0 border-t border-light bg-white px-4 py-3 transition-all duration-500 ease-out motion-reduce:transition-none sm:px-6 sm:py-4",
             composerEntered
               ? "translate-y-0 opacity-100"
-              : "translate-y-8 opacity-0 motion-reduce:translate-y-0 motion-reduce:opacity-100"
+              : "translate-y-8 opacity-0 motion-reduce:translate-y-0 motion-reduce:opacity-100",
           )}
         >
           <div className="mx-auto max-w-3xl lg:max-w-4xl">
-            <ChatSearchBar id="crave-inchat-composer" />
+            <ChatSearchBar
+              id="crave-inchat-composer"
+              disabled={pending}
+              onSend={async (text, parts) => {
+                if (!text.trim() && parts.length === 0) return;
+                const nextUser = buildInitialUserTurn(text, parts);
+                const thread = [...messages, nextUser];
+                setMessages(thread);
+                await runCompletion(thread);
+              }}
+            />
           </div>
         </footer>
       </div>

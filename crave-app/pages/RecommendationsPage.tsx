@@ -180,6 +180,11 @@ export default function RecommendationsPage() {
                 restaurant={orderModalRestaurant ?? DEFAULT_RESTAURANT}
                 onClose={() => setOrderModalRestaurant(null)}
                 onBrowseMenu={openMenuFromOrderModal}
+                onNavigateToReservations={() => {
+                    setOrderModalRestaurant(null);
+                    setActiveTab("reservations");
+                    setScreen({ name: "reservations" });
+                }}
             />
             <View className="flex-1">
                 <ScrollView

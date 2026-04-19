@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 import Image from "next/image";
 import { ChatSearchBar } from "@/components/crave-assistant/chat-search-bar";
 import { cn } from "@/lib/utils";
+import type { UserContentPart } from "@/lib/b2b-chat/multipart-messages";
 
 const pastConversations = [
   "some question about the restaurant blah blah blah bl...",
@@ -16,20 +17,11 @@ const pastConversations = [
 ];
 
 type CravePreChatViewProps = {
-  onStartChat: (message: string) => void;
+  onStartChat: (message: string, parts: UserContentPart[]) => void;
 };
 
 export function CravePreChatView({ onStartChat }: CravePreChatViewProps) {
   const [exiting, setExiting] = useState(false);
-
-  function handleSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const data = new FormData(e.currentTarget);
-    const q = String(data.get("q") ?? "").trim();
-    if (!q || exiting) return;
-    setExiting(true);
-    window.setTimeout(() => onStartChat(q), 460);
-  }
 
   return (
     <main className="flex h-full min-h-0 flex-col overflow-hidden bg-white font-sans">
@@ -38,7 +30,8 @@ export function CravePreChatView({ onStartChat }: CravePreChatViewProps) {
           <div
             className={cn(
               "relative h-28 w-56 transition-opacity duration-300 ease-out motion-reduce:transition-none sm:h-36 sm:w-72",
-              exiting && "pointer-events-none opacity-0"
+              "motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-500 motion-safe:ease-out motion-safe:fill-mode-both",
+              exiting && "pointer-events-none opacity-0",
             )}
           >
             <Image
@@ -55,22 +48,30 @@ export function CravePreChatView({ onStartChat }: CravePreChatViewProps) {
               }}
             />
           </div>
-          <form
-            onSubmit={handleSubmit}
+          <div
             className={cn(
               "mt-8 w-full max-w-full transition-all duration-500 ease-in-out motion-reduce:transition-none sm:mt-10",
+              "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-500 motion-safe:ease-out motion-safe:delay-100 motion-safe:fill-mode-both",
               exiting &&
-                "translate-y-[min(52vh,28rem)] scale-[0.97] opacity-0 motion-reduce:translate-y-0 motion-reduce:scale-100 motion-reduce:opacity-100"
+                "translate-y-[min(52vh,28rem)] scale-[0.97] opacity-0 motion-reduce:translate-y-0 motion-reduce:scale-100 motion-reduce:opacity-100",
             )}
           >
-            <ChatSearchBar name="q" id="crave-prechat-search" />
-          </form>
+            <ChatSearchBar
+              id="crave-prechat-search"
+              onSend={async (text, parts) => {
+                if (!text.trim() && parts.length === 0) return;
+                setExiting(true);
+                window.setTimeout(() => onStartChat(text, parts), 460);
+              }}
+            />
+          </div>
         </div>
 
         <section
           className={cn(
             "mt-8 flex min-h-0 flex-1 flex-col transition-opacity duration-300 ease-out motion-reduce:transition-none sm:mt-10",
-            exiting && "opacity-0"
+            "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-500 motion-safe:ease-out motion-safe:delay-150 motion-safe:fill-mode-both",
+            exiting && "opacity-0",
           )}
         >
           <h2 className="mb-3 shrink-0 text-left text-lg font-bold text-dark sm:text-xl">
@@ -81,7 +82,7 @@ export function CravePreChatView({ onStartChat }: CravePreChatViewProps) {
               <li key={i}>
                 <button
                   type="button"
-                  className="w-full rounded-xl bg-light px-4 py-3.5 text-left text-sm text-dark transition-colors hover:bg-light/80 sm:text-base"
+                  className="w-full rounded-xl bg-light px-4 py-3.5 text-left text-sm text-dark transition-[transform,colors,box-shadow] duration-150 ease-out hover:bg-light/80 hover:shadow-sm active:scale-[0.99] sm:text-base motion-reduce:active:scale-100"
                 >
                   <span className="block truncate">{text}</span>
                 </button>

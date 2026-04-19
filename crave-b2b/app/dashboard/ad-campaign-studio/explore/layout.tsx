@@ -5,9 +5,5 @@ export default function ExploreYourOptionsLayout({
 }: {
   children: ReactNode;
 }) {
-  return (
-    <div className="flex h-[calc(100svh-4rem)] min-h-0 w-full flex-col overflow-hidden overscroll-none">
-      {children}
-    </div>
-  );
+  return <div className="w-full min-h-0">{children}</div>;
 }

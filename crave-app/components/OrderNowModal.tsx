@@ -1,12 +1,16 @@
 import AnimatedCookingDots from "@/components/AnimatedCookingDots";
+import BookingCallProgressModal, {
+    type CallBookingPhase,
+} from "@/components/BookingCallProgressModal";
 import ReservationSchedulePicker, {
     getNextReservationSlot,
 } from "@/components/ReservationSchedulePicker";
 import type { Restaurant } from "@/constants/orderingMockData";
 import { useGroupsSession } from "@/context/GroupsSessionContext";
+import { createBookingViaEdge } from "@/lib/bookingsApi";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { BookOpen, ChevronDown, Mic, MicOff, Phone } from "lucide-react-native";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     Animated,
     Easing,
@@ -29,6 +33,8 @@ type OrderNowModalProps = {
     restaurant: Restaurant;
     onClose: () => void;
     onBrowseMenu: (restaurant: Restaurant) => void;
+    /** After a successful in-app booking, jump user to the Reservations tab. */
+    onNavigateToReservations?: () => void;
 };
 
 function formatReservationChip(d: Date): string {
@@ -43,6 +49,7 @@ export default function OrderNowModal({
     restaurant,
     onClose,
     onBrowseMenu,
+    onNavigateToReservations,
 }: OrderNowModalProps) {
     const { currentGroup } = useGroupsSession();
     const [bookReservation, setBookReservation] = useState(true);
@@ -55,11 +62,29 @@ export default function OrderNowModal({
     );
     const [reservationPickerOpen, setReservationPickerOpen] = useState(false);
 
+    const [callFlowVisible, setCallFlowVisible] = useState(false);
+    const [callPhase, setCallPhase] = useState<CallBookingPhase>("calling");
+    const [callBookingId, setCallBookingId] = useState<string | null>(null);
+    const [callError, setCallError] = useState<string | null>(null);
+
     useEffect(() => {
-        if (!visible) return;
+        if (!visible) {
+            setCallFlowVisible(false);
+            setCallPhase("calling");
+            setCallBookingId(null);
+            setCallError(null);
+            return;
+        }
         setReservationSlot(getNextReservationSlot(new Date(), restaurant));
         setReservationPickerOpen(false);
-    }, [visible, restaurant]);
+        setCallFlowVisible(false);
+        setCallPhase("calling");
+        setCallBookingId(null);
+        setCallError(null);
+        // Use restaurant.id only: the parent often passes a new object reference each render
+        // while the modal is open; re-running this effect would clear callFlowVisible and
+        // make “Process Via Call” appear to do nothing.
+    }, [visible, restaurant.id]);
 
     const pulse1 = useRef(new Animated.Value(0)).current;
     const pulse2 = useRef(new Animated.Value(0)).current;
@@ -130,6 +155,101 @@ export default function OrderNowModal({
         ],
     });
 
+    const reservationSummary = useMemo(() => {
+        if (!bookReservation) {
+            return "Flexible timing — we’ll ask for the soonest table.";
+        }
+        const a = new Date(reservationSlot);
+        const b = new Date(a.getTime() + 10 * 60 * 1000);
+        const fmt = (d: Date) =>
+            d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+        return `Target window ${fmt(a)} – ${fmt(b)}`;
+    }, [bookReservation, reservationSlot]);
+
+    const detailLine = useMemo(() => {
+        const g = currentGroup?.name ? ` for ${currentGroup.name}` : "";
+        return `Our assistant is calling ${restaurant.name}${g}. Once you’re booked, upload a receipt photo to run bill splitting for your group.`;
+    }, [restaurant.name, currentGroup?.name]);
+
+    const startCallFlow = useCallback(() => {
+        setCallError(null);
+        setCallBookingId(null);
+        setCallPhase("calling");
+        setCallFlowVisible(true);
+    }, []);
+
+    useEffect(() => {
+        if (!callFlowVisible || callPhase !== "calling") return;
+        const t = setTimeout(() => setCallPhase("booking"), 2600);
+        return () => clearTimeout(t);
+    }, [callFlowVisible, callPhase]);
+
+    const voiceLinesRef = useRef(voiceLines);
+    voiceLinesRef.current = voiceLines;
+    const orderItemsRef = useRef(orderItems);
+    orderItemsRef.current = orderItems;
+
+    useEffect(() => {
+        if (!callFlowVisible || callPhase !== "booking") return;
+        let cancelled = false;
+        const noteParts: string[] = [];
+        const vl = voiceLinesRef.current;
+        if (vl.length) {
+            noteParts.push(`Voice notes: ${vl.slice(-6).join(" | ")}`);
+        }
+        if (orderItemsRef.current) {
+            noteParts.push("User requested menu-backed ordering when possible.");
+        }
+        void (async () => {
+            try {
+                const partySize = Math.max(1, (currentGroup?.phones?.length ?? 0) + 1);
+                const { booking_id } = await createBookingViaEdge({
+                    restaurant_id: restaurant.id,
+                    party_size: partySize,
+                    scheduled_at: bookReservation ? reservationSlot.toISOString() : null,
+                    group_id: currentGroup?.id ?? null,
+                    dietary_notes: noteParts.length ? noteParts.join("\n") : null,
+                });
+                if (cancelled) return;
+                setCallBookingId(booking_id);
+                setCallPhase("booked");
+            } catch (e: unknown) {
+                if (cancelled) return;
+                const raw = e instanceof Error ? e.message : "Booking failed";
+                const friendly = /restaurant_not_partner|not_partner/i.test(raw)
+                    ? "This restaurant isn’t on CRAVE’s in-app booking network yet. Pick a partner venue from Reservations → + to book."
+                    : raw;
+                setCallError(friendly);
+                setCallPhase("error");
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [
+        callFlowVisible,
+        callPhase,
+        restaurant.id,
+        bookReservation,
+        reservationSlot,
+        currentGroup?.id,
+        currentGroup?.phones?.length,
+    ]);
+
+    const handleCloseProgress = useCallback(() => {
+        const p = callPhase;
+        setCallFlowVisible(false);
+        if (p === "booked") {
+            onClose();
+        }
+    }, [callPhase, onClose]);
+
+    const handleViewReservations = useCallback(() => {
+        setCallFlowVisible(false);
+        onClose();
+        onNavigateToReservations?.();
+    }, [onClose, onNavigateToReservations]);
+
     return (
         <Modal
             visible={visible}
@@ -138,9 +258,17 @@ export default function OrderNowModal({
             onRequestClose={onClose}
         >
             <View className="flex-1 justify-center bg-black/45 px-4">
-                <Pressable className="absolute inset-0" onPress={onClose} accessibilityLabel="Dismiss" />
+                <Pressable
+                    className="absolute inset-0"
+                    onPress={onClose}
+                    accessibilityLabel="Dismiss"
+                    style={{ zIndex: 0 }}
+                />
 
-                <View className="max-h-[88%] overflow-hidden rounded-3xl bg-white shadow-lg shadow-black/30">
+                <View
+                    className="max-h-[88%] overflow-hidden rounded-3xl bg-white shadow-lg shadow-black/30"
+                    style={{ zIndex: 1, elevation: 12 }}
+                >
                     <ScrollView
                         keyboardShouldPersistTaps="handled"
                         showsVerticalScrollIndicator={false}
@@ -356,8 +484,11 @@ export default function OrderNowModal({
 
                         <TouchableOpacity
                             activeOpacity={0.9}
+                            onPress={startCallFlow}
                             className="mt-6 flex-row items-center justify-center gap-2 rounded-2xl py-3.5"
                             style={{ backgroundColor: ORANGE }}
+                            accessibilityRole="button"
+                            accessibilityLabel="Process booking via AI phone call"
                         >
                             <Phone size={18} color="#ffffff" strokeWidth={2.2} />
                             <Text className="font-josefin-bold text-[13px] text-white">
@@ -372,6 +503,18 @@ export default function OrderNowModal({
                         </View>
                     </ScrollView>
                 </View>
+
+                <BookingCallProgressModal
+                    visible={callFlowVisible}
+                    restaurantName={restaurant.name}
+                    phase={callPhase}
+                    errorMessage={callError}
+                    bookingId={callBookingId}
+                    reservationSummary={reservationSummary}
+                    detailLine={detailLine}
+                    onClose={handleCloseProgress}
+                    onViewReservations={handleViewReservations}
+                />
             </View>
         </Modal>
     );

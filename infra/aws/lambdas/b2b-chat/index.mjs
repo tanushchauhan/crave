@@ -60,12 +60,22 @@ function bearerToken(authHeader) {
   return m ? m[1] : authHeader.trim();
 }
 
+/**
+ * Parse data:image/...;base64,... including optional parameters (e.g. charset)
+ * before the base64 payload. Strict /^data:[^;]+;base64,/ fails on
+ * data:image/jpeg;charset=UTF-8;base64,... and breaks Bedrock image input.
+ */
 function decodeDataUrl(url) {
   if (typeof url !== "string") return null;
-  const m = url.match(/^data:([^;]+);base64,(.+)$/is);
-  if (!m) return null;
-  const mime = m[1].trim().toLowerCase();
-  let b64 = m[2].replace(/\s/g, "");
+  const compact = url.replace(/\s/g, "");
+  const marker = ";base64,";
+  const mi = compact.toLowerCase().indexOf(marker);
+  if (mi === -1) return null;
+  const header = compact.slice(0, mi);
+  const hm = header.match(/^data:(.+)$/i);
+  if (!hm) return null;
+  const mime = hm[1].split(";")[0].trim().toLowerCase();
+  let b64 = compact.slice(mi + marker.length);
   const pad = b64.length % 4;
   if (pad) b64 += "=".repeat(4 - pad);
   try {
@@ -82,6 +92,31 @@ function mimeToImageFormat(mime) {
   if (mime.includes("gif")) return "gif";
   if (mime.includes("webp")) return "webp";
   return null;
+}
+
+/**
+ * Bedrock Converse document.name: only alphanumeric, whitespace, hyphen,
+ * parentheses, square brackets; no consecutive whitespace.
+ * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_DocumentBlock.html
+ */
+function sanitizeBedrockPdfDocumentName(name) {
+  let s = String(name ?? "").trim();
+  if (!s) s = "upload";
+  s = s.replace(/[^a-zA-Z0-9 \-\(\)\[\]]+/g, " ");
+  s = s.replace(/\s+/g, " ").trim();
+  if (!s) s = "upload";
+  return s.slice(0, 80);
+}
+
+function isPdfBuffer(buf) {
+  return (
+    buf &&
+    buf.length >= 4 &&
+    buf[0] === 0x25 &&
+    buf[1] === 0x50 &&
+    buf[2] === 0x44 &&
+    buf[3] === 0x46
+  );
 }
 
 /**
@@ -152,6 +187,7 @@ function contentToBlocks(content) {
       }
       const lower = name.toLowerCase();
       const isPdf =
+        (buf && isPdfBuffer(buf)) ||
         lower.endsWith(".pdf") ||
         (typeof f.mime_type === "string" &&
           f.mime_type.toLowerCase().includes("pdf"));
@@ -159,7 +195,7 @@ function contentToBlocks(content) {
         blocks.push({
           document: {
             format: "pdf",
-            name: name.slice(0, 80),
+            name: sanitizeBedrockPdfDocumentName(name),
             source: { bytes: buf },
           },
         });

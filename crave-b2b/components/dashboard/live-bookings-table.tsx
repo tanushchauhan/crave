@@ -1,14 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowDownUp,
   ArrowUp,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
   Search,
 } from "lucide-react";
 import { Popover as PopoverPrimitive } from "radix-ui";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -20,11 +24,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { DashboardShowMore } from "@/components/dashboard/dashboard-show-more";
+import { mergeLiveRowsAfterRefetch } from "@/lib/dashboard/live-rows";
 import type { LiveBookingTableRow } from "@/lib/dashboard/types";
+import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 const colCount = 6;
+/** Rows per page for the live table */
+const PAGE_SIZE = 10;
 
 function parsePartySize(size: string): number {
   const n = Number.parseInt(size, 10);
@@ -74,19 +81,80 @@ function ariaSortValue(dir: SortDir): "ascending" | "descending" | "none" {
 
 export type LiveBookingsTableProps = {
   rows: LiveBookingTableRow[];
+  restaurantId: string | null;
+  /** True when server returned a full merged cap (may exist older rows in DB) */
+  mergedCapHit?: boolean;
 };
 
-export function LiveBookingsTable({ rows: sourceRows }: LiveBookingsTableProps) {
+export function LiveBookingsTable({
+  rows: initialRows,
+  restaurantId,
+  mergedCapHit = false,
+}: LiveBookingsTableProps) {
+  const [rows, setRows] = useState<LiveBookingTableRow[]>(initialRows);
+  const [pageIndex, setPageIndex] = useState(0);
   const [phoneFilter, setPhoneFilter] = useState("");
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [olderExhausted, setOlderExhausted] = useState(false);
+  const pendingJumpToLastPage = useRef(false);
 
-  const rows = useMemo(
-    () => sourceRows.map((r, defaultOrder) => ({ ...r, defaultOrder })),
-    [sourceRows],
-  );
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      setRows(initialRows);
+      setPageIndex(0);
+      setOlderExhausted(false);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [initialRows]);
 
-  const displayedRows = useMemo(() => {
+  useEffect(() => {
+    setPageIndex(0);
+  }, [phoneFilter, sortKey, sortDir]);
+
+  const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleRefetch = useCallback(() => {
+    if (refetchTimer.current) clearTimeout(refetchTimer.current);
+    refetchTimer.current = setTimeout(async () => {
+      refetchTimer.current = null;
+      try {
+        const res = await fetch("/api/dashboard/live-rows?limit=30");
+        const data = (await res.json()) as { rows?: LiveBookingTableRow[] };
+        if (res.ok && Array.isArray(data.rows)) {
+          setRows((prev) => mergeLiveRowsAfterRefetch(prev, data.rows!, 120));
+        }
+      } catch {
+        /* ignore */
+      }
+    }, 450);
+  }, []);
+
+  useEffect(() => {
+    if (!restaurantId) return;
+    const supabase = createBrowserSupabaseClient();
+    const handler = () => scheduleRefetch();
+    const channel = supabase
+      .channel(`dashboard-live-${restaurantId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "bookings", filter: `restaurant_id=eq.${restaurantId}` },
+        handler,
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "orders", filter: `restaurant_id=eq.${restaurantId}` },
+        handler,
+      )
+      .subscribe();
+
+    return () => {
+      if (refetchTimer.current) clearTimeout(refetchTimer.current);
+      void supabase.removeChannel(channel);
+    };
+  }, [restaurantId, scheduleRefetch]);
+
+  const sortedFiltered = useMemo(() => {
     const q = phoneFilter.trim();
     let list = rows.filter((r) => {
       if (q === "") return true;
@@ -110,11 +178,83 @@ export function LiveBookingsTable({ rows: sourceRows }: LiveBookingsTableProps) 
         return sortDir === "asc" ? cmp : -cmp;
       });
     } else {
-      list = [...list].sort((a, b) => a.defaultOrder - b.defaultOrder);
+      list = [...list].sort((a, b) => b.atMs - a.atMs);
     }
 
     return list;
   }, [rows, phoneFilter, sortKey, sortDir]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedFiltered.length / PAGE_SIZE));
+
+  useEffect(() => {
+    setPageIndex((p) => Math.min(p, totalPages - 1));
+  }, [totalPages]);
+
+  useEffect(() => {
+    if (!pendingJumpToLastPage.current) return;
+    pendingJumpToLastPage.current = false;
+    const last = Math.max(0, Math.ceil(sortedFiltered.length / PAGE_SIZE) - 1);
+    setPageIndex(last);
+  }, [sortedFiltered.length]);
+
+  const displayedRows = useMemo(
+    () =>
+      sortedFiltered.slice(pageIndex * PAGE_SIZE, (pageIndex + 1) * PAGE_SIZE),
+    [sortedFiltered, pageIndex],
+  );
+
+  const rangeStart = sortedFiltered.length === 0 ? 0 : pageIndex * PAGE_SIZE + 1;
+  const rangeEnd = Math.min(sortedFiltered.length, (pageIndex + 1) * PAGE_SIZE);
+
+  const onPrevPage = () => setPageIndex((p) => Math.max(0, p - 1));
+  const onNextPage = () => setPageIndex((p) => Math.min(totalPages - 1, p + 1));
+
+  const isOnLastPage = pageIndex >= totalPages - 1;
+  const canLoadOlderRemote =
+    mergedCapHit &&
+    !olderExhausted &&
+    isOnLastPage &&
+    sortedFiltered.length > 0;
+
+  async function loadOlderFromApi() {
+    const oldest = sortedFiltered[sortedFiltered.length - 1];
+    if (!oldest) return;
+    setLoadingOlder(true);
+    try {
+      const res = await fetch(
+        `/api/dashboard/live-rows?before_ms=${encodeURIComponent(String(oldest.atMs))}&limit=25`,
+      );
+      const data = (await res.json()) as { rows?: LiveBookingTableRow[] };
+      if (!res.ok || !Array.isArray(data.rows)) {
+        setOlderExhausted(true);
+        return;
+      }
+      if (data.rows.length === 0) {
+        setOlderExhausted(true);
+        return;
+      }
+      let appended = 0;
+      setRows((prev) => {
+        const seen = new Set(prev.map((r) => r.id));
+        const add = data.rows!.filter((r) => !seen.has(r.id));
+        appended = add.length;
+        if (add.length === 0) {
+          return prev;
+        }
+        return [...prev, ...add].sort((a, b) => b.atMs - a.atMs);
+      });
+      if (appended > 0) {
+        pendingJumpToLastPage.current = true;
+      } else {
+        setOlderExhausted(true);
+      }
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
+
+  const showPaginationFooter = sortedFiltered.length > 0;
+  const showLoadOlderRow = sortedFiltered.length > 0 && (canLoadOlderRemote || loadingOlder);
 
   function cycleSort(key: SortKey) {
     if (sortKey !== key) {
@@ -152,7 +292,7 @@ export function LiveBookingsTable({ rows: sourceRows }: LiveBookingsTableProps) 
                       className={cn(
                         "inline-flex w-full items-center gap-1.5 font-semibold text-dark",
                         "cursor-pointer rounded-md text-left outline-none",
-                        "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40"
+                        "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40",
                       )}
                       aria-label="Filter by phone number"
                     >
@@ -172,7 +312,7 @@ export function LiveBookingsTable({ rows: sourceRows }: LiveBookingsTableProps) 
                       className={cn(
                         "z-50 w-[min(calc(100vw-2rem),280px)] rounded-lg border border-brand/25 bg-white p-3 shadow-md",
                         "data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95",
-                        "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
+                        "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
                       )}
                     >
                       <div className="flex flex-col gap-2">
@@ -206,7 +346,7 @@ export function LiveBookingsTable({ rows: sourceRows }: LiveBookingsTableProps) 
                   className={cn(
                     "inline-flex items-center gap-1.5 font-semibold text-dark",
                     "cursor-pointer rounded-md outline-none",
-                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40"
+                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40",
                   )}
                 >
                   Size
@@ -223,7 +363,7 @@ export function LiveBookingsTable({ rows: sourceRows }: LiveBookingsTableProps) 
                   className={cn(
                     "inline-flex items-center gap-1.5 font-semibold text-dark",
                     "cursor-pointer rounded-md outline-none",
-                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40"
+                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40",
                   )}
                 >
                   Date
@@ -240,7 +380,7 @@ export function LiveBookingsTable({ rows: sourceRows }: LiveBookingsTableProps) 
                   className={cn(
                     "inline-flex items-center gap-1.5 font-semibold text-dark",
                     "cursor-pointer rounded-md outline-none",
-                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40"
+                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40",
                   )}
                 >
                   Time
@@ -282,11 +422,75 @@ export function LiveBookingsTable({ rows: sourceRows }: LiveBookingsTableProps) 
             )}
           </TableBody>
           <TableFooter className="border-0 bg-transparent p-0 hover:bg-transparent">
-            <TableRow className="border-0 hover:bg-transparent">
-              <TableCell colSpan={colCount} className="p-0">
-                <DashboardShowMore />
-              </TableCell>
-            </TableRow>
+            {showPaginationFooter ? (
+              <TableRow className="border-0 hover:bg-transparent">
+                <TableCell colSpan={colCount} className="p-0">
+                  <div
+                    className="flex flex-col gap-0 border-t border-brand/15 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4 sm:py-3"
+                    role="navigation"
+                    aria-label="Live bookings pagination"
+                  >
+                    <p className="order-2 px-4 py-2 text-center text-xs text-gray-dark sm:order-1 sm:px-0 sm:py-0 sm:text-left sm:text-sm">
+                      Showing{" "}
+                      <span className="font-semibold text-dark">
+                        {rangeStart}–{rangeEnd}
+                      </span>{" "}
+                      of{" "}
+                      <span className="font-semibold text-dark">{sortedFiltered.length}</span>
+                    </p>
+                    <div className="order-1 flex items-center justify-center gap-2 sm:order-2 sm:justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="min-w-[5.5rem] border-brand/40 font-semibold text-dark hover:bg-light/80"
+                        onClick={onPrevPage}
+                        disabled={pageIndex <= 0}
+                        aria-label="Previous page"
+                      >
+                        <ChevronLeft className="size-4" aria-hidden />
+                        Previous
+                      </Button>
+                      <span className="min-w-[6rem] text-center text-sm font-semibold tabular-nums text-dark">
+                        Page {pageIndex + 1} of {totalPages}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="min-w-[5.5rem] border-brand/40 font-semibold text-dark hover:bg-light/80"
+                        onClick={onNextPage}
+                        disabled={pageIndex >= totalPages - 1}
+                        aria-label="Next page"
+                      >
+                        Next
+                        <ChevronRight className="size-4" aria-hidden />
+                      </Button>
+                    </div>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ) : null}
+            {showLoadOlderRow ? (
+              <TableRow className="border-0 hover:bg-transparent">
+                <TableCell colSpan={colCount} className="p-0">
+                  <button
+                    type="button"
+                    onClick={() => void loadOlderFromApi()}
+                    disabled={loadingOlder || !canLoadOlderRemote}
+                    className={cn(
+                      "flex w-full items-center justify-center gap-2 bg-brand py-3 text-sm font-bold text-white transition-colors hover:bg-brand/95",
+                      (loadingOlder || !canLoadOlderRemote) && "cursor-not-allowed opacity-70",
+                    )}
+                  >
+                    {loadingOlder ? (
+                      <Loader2 className="size-4 shrink-0 animate-spin" strokeWidth={2.5} aria-hidden />
+                    ) : null}
+                    {loadingOlder ? "Loading…" : "Load older entries"}
+                  </button>
+                </TableCell>
+              </TableRow>
+            ) : null}
           </TableFooter>
         </Table>
       </CardContent>
