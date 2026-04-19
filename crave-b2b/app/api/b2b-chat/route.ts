@@ -6,6 +6,7 @@ import {
   MAX_IMAGE_BYTES,
   MAX_PDF_BYTES,
   normalizeImageDataUrl,
+  sanitizeBedrockPdfDocumentName,
 } from "@/lib/b2b-chat/multipart-messages";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
@@ -46,19 +47,31 @@ function sanitizeUserContent(content: unknown): string | UserContentPart[] | nul
       if (f && typeof f === "object") {
         const fn = (f as { filename?: unknown }).filename;
         const fd = (f as { file_data?: unknown }).file_data;
-        if (
-          typeof fn === "string" &&
-          typeof fd === "string" &&
-          fn.toLowerCase().endsWith(".pdf")
-        ) {
+        if (typeof fn === "string" && typeof fd === "string") {
           const raw = fd.replace(/\s/g, "");
           const approx = Math.floor((raw.length * 3) / 4);
-          if (approx > 0 && approx <= MAX_PDF_BYTES) {
-            parts.push({
-              type: "file",
-              file: { filename: fn.slice(0, 200), file_data: raw },
-            });
+          if (approx <= 0 || approx > MAX_PDF_BYTES) continue;
+          const nameLooksPdf = fn.toLowerCase().endsWith(".pdf");
+          let bytesLookPdf = false;
+          try {
+            const head = Buffer.from(raw.slice(0, 32), "base64");
+            bytesLookPdf =
+              head.length >= 4 &&
+              head[0] === 0x25 &&
+              head[1] === 0x50 &&
+              head[2] === 0x44 &&
+              head[3] === 0x46;
+          } catch {
+            bytesLookPdf = false;
           }
+          if (!nameLooksPdf && !bytesLookPdf) continue;
+          parts.push({
+            type: "file",
+            file: {
+              filename: sanitizeBedrockPdfDocumentName(fn),
+              file_data: raw,
+            },
+          });
         }
       }
     }

@@ -45,6 +45,19 @@ export function isAllowedImageDataUrl(url: string): boolean {
   return /^data:image\/(png|jpeg|jpg|gif|webp);base64,/i.test(n);
 }
 
+/**
+ * Bedrock Converse `document.name`: alphanumeric, whitespace, hyphen, (), [] only;
+ * no consecutive whitespace. (Dots/underscores etc. are not allowed.)
+ */
+export function sanitizeBedrockPdfDocumentName(name: string): string {
+  let s = String(name ?? "").trim();
+  if (!s) s = "upload";
+  s = s.replace(/[^a-zA-Z0-9 \-\(\)\[\]]+/g, " ");
+  s = s.replace(/\s+/g, " ").trim();
+  if (!s) s = "upload";
+  return s.slice(0, 80);
+}
+
 function uint8ToBase64(bytes: Uint8Array): string {
   let binary = "";
   const chunk = 0x8000;

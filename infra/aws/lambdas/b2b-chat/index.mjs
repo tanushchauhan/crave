@@ -95,6 +95,31 @@ function mimeToImageFormat(mime) {
 }
 
 /**
+ * Bedrock Converse document.name: only alphanumeric, whitespace, hyphen,
+ * parentheses, square brackets; no consecutive whitespace.
+ * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_DocumentBlock.html
+ */
+function sanitizeBedrockPdfDocumentName(name) {
+  let s = String(name ?? "").trim();
+  if (!s) s = "upload";
+  s = s.replace(/[^a-zA-Z0-9 \-\(\)\[\]]+/g, " ");
+  s = s.replace(/\s+/g, " ").trim();
+  if (!s) s = "upload";
+  return s.slice(0, 80);
+}
+
+function isPdfBuffer(buf) {
+  return (
+    buf &&
+    buf.length >= 4 &&
+    buf[0] === 0x25 &&
+    buf[1] === 0x50 &&
+    buf[2] === 0x44 &&
+    buf[3] === 0x46
+  );
+}
+
+/**
  * OpenAI-style message.content → Bedrock Converse content blocks.
  */
 function contentToBlocks(content) {
@@ -162,19 +187,15 @@ function contentToBlocks(content) {
       }
       const lower = name.toLowerCase();
       const isPdf =
+        (buf && isPdfBuffer(buf)) ||
         lower.endsWith(".pdf") ||
         (typeof f.mime_type === "string" &&
           f.mime_type.toLowerCase().includes("pdf"));
       if (buf && isPdf && buf.length > 0 && buf.length <= MAX_DOC_BYTES) {
-        const safeName =
-          String(name)
-            .replace(/[^\w.\-]+/g, "_")
-            .replace(/_+/g, "_")
-            .slice(0, 80) || "upload.pdf";
         blocks.push({
           document: {
             format: "pdf",
-            name: safeName,
+            name: sanitizeBedrockPdfDocumentName(name),
             source: { bytes: buf },
           },
         });
