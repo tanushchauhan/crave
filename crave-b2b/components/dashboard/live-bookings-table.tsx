@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowDownUp,
@@ -21,10 +21,14 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { DashboardShowMore } from "@/components/dashboard/dashboard-show-more";
+import { mergeLiveRowsAfterRefetch } from "@/lib/dashboard/live-rows";
 import type { LiveBookingTableRow } from "@/lib/dashboard/types";
+import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 const colCount = 6;
+const INITIAL_VISIBLE = 10;
+const PAGE_STEP = 10;
 
 function parsePartySize(size: string): number {
   const n = Number.parseInt(size, 10);
@@ -74,19 +78,75 @@ function ariaSortValue(dir: SortDir): "ascending" | "descending" | "none" {
 
 export type LiveBookingsTableProps = {
   rows: LiveBookingTableRow[];
+  restaurantId: string | null;
+  /** True when server returned a full merged cap (may exist older rows in DB) */
+  mergedCapHit?: boolean;
 };
 
-export function LiveBookingsTable({ rows: sourceRows }: LiveBookingsTableProps) {
+export function LiveBookingsTable({
+  rows: initialRows,
+  restaurantId,
+  mergedCapHit = false,
+}: LiveBookingsTableProps) {
+  const [rows, setRows] = useState<LiveBookingTableRow[]>(initialRows);
+  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
   const [phoneFilter, setPhoneFilter] = useState("");
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [olderExhausted, setOlderExhausted] = useState(false);
 
-  const rows = useMemo(
-    () => sourceRows.map((r, defaultOrder) => ({ ...r, defaultOrder })),
-    [sourceRows],
-  );
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      setRows(initialRows);
+      setVisibleCount(INITIAL_VISIBLE);
+      setOlderExhausted(false);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [initialRows]);
 
-  const displayedRows = useMemo(() => {
+  const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleRefetch = useCallback(() => {
+    if (refetchTimer.current) clearTimeout(refetchTimer.current);
+    refetchTimer.current = setTimeout(async () => {
+      refetchTimer.current = null;
+      try {
+        const res = await fetch("/api/dashboard/live-rows?limit=30");
+        const data = (await res.json()) as { rows?: LiveBookingTableRow[] };
+        if (res.ok && Array.isArray(data.rows)) {
+          setRows((prev) => mergeLiveRowsAfterRefetch(prev, data.rows!, 120));
+        }
+      } catch {
+        /* ignore */
+      }
+    }, 450);
+  }, []);
+
+  useEffect(() => {
+    if (!restaurantId) return;
+    const supabase = createBrowserSupabaseClient();
+    const handler = () => scheduleRefetch();
+    const channel = supabase
+      .channel(`dashboard-live-${restaurantId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "bookings", filter: `restaurant_id=eq.${restaurantId}` },
+        handler,
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "orders", filter: `restaurant_id=eq.${restaurantId}` },
+        handler,
+      )
+      .subscribe();
+
+    return () => {
+      if (refetchTimer.current) clearTimeout(refetchTimer.current);
+      void supabase.removeChannel(channel);
+    };
+  }, [restaurantId, scheduleRefetch]);
+
+  const sortedFiltered = useMemo(() => {
     const q = phoneFilter.trim();
     let list = rows.filter((r) => {
       if (q === "") return true;
@@ -110,11 +170,74 @@ export function LiveBookingsTable({ rows: sourceRows }: LiveBookingsTableProps) 
         return sortDir === "asc" ? cmp : -cmp;
       });
     } else {
-      list = [...list].sort((a, b) => a.defaultOrder - b.defaultOrder);
+      list = [...list].sort((a, b) => b.atMs - a.atMs);
     }
 
     return list;
   }, [rows, phoneFilter, sortKey, sortDir]);
+
+  const displayedRows = useMemo(
+    () => sortedFiltered.slice(0, visibleCount),
+    [sortedFiltered, visibleCount],
+  );
+
+  const canShowMoreLocal = visibleCount < sortedFiltered.length;
+  const canLoadOlderRemote =
+    mergedCapHit &&
+    !olderExhausted &&
+    visibleCount >= sortedFiltered.length &&
+    sortedFiltered.length > 0;
+
+  async function loadOlderFromApi() {
+    const oldest = sortedFiltered[sortedFiltered.length - 1];
+    if (!oldest) return;
+    setLoadingOlder(true);
+    try {
+      const res = await fetch(
+        `/api/dashboard/live-rows?before_ms=${encodeURIComponent(String(oldest.atMs))}&limit=25`,
+      );
+      const data = (await res.json()) as { rows?: LiveBookingTableRow[] };
+      if (!res.ok || !Array.isArray(data.rows)) {
+        setOlderExhausted(true);
+        return;
+      }
+      if (data.rows.length === 0) {
+        setOlderExhausted(true);
+        return;
+      }
+      let appended = 0;
+      setRows((prev) => {
+        const seen = new Set(prev.map((r) => r.id));
+        const add = data.rows!.filter((r) => !seen.has(r.id));
+        appended = add.length;
+        if (add.length === 0) {
+          return prev;
+        }
+        return [...prev, ...add].sort((a, b) => b.atMs - a.atMs);
+      });
+      if (appended > 0) {
+        setVisibleCount((c) => c + appended);
+      } else {
+        setOlderExhausted(true);
+      }
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
+
+  function onShowMore() {
+    if (canShowMoreLocal) {
+      setVisibleCount((c) => Math.min(c + PAGE_STEP, sortedFiltered.length));
+      return;
+    }
+    if (canLoadOlderRemote) {
+      void loadOlderFromApi();
+    }
+  }
+
+  const showFooter =
+    sortedFiltered.length > 0 &&
+    (canShowMoreLocal || canLoadOlderRemote || loadingOlder);
 
   function cycleSort(key: SortKey) {
     if (sortKey !== key) {
@@ -152,7 +275,7 @@ export function LiveBookingsTable({ rows: sourceRows }: LiveBookingsTableProps) 
                       className={cn(
                         "inline-flex w-full items-center gap-1.5 font-semibold text-dark",
                         "cursor-pointer rounded-md text-left outline-none",
-                        "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40"
+                        "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40",
                       )}
                       aria-label="Filter by phone number"
                     >
@@ -172,7 +295,7 @@ export function LiveBookingsTable({ rows: sourceRows }: LiveBookingsTableProps) 
                       className={cn(
                         "z-50 w-[min(calc(100vw-2rem),280px)] rounded-lg border border-brand/25 bg-white p-3 shadow-md",
                         "data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95",
-                        "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
+                        "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
                       )}
                     >
                       <div className="flex flex-col gap-2">
@@ -206,7 +329,7 @@ export function LiveBookingsTable({ rows: sourceRows }: LiveBookingsTableProps) 
                   className={cn(
                     "inline-flex items-center gap-1.5 font-semibold text-dark",
                     "cursor-pointer rounded-md outline-none",
-                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40"
+                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40",
                   )}
                 >
                   Size
@@ -223,7 +346,7 @@ export function LiveBookingsTable({ rows: sourceRows }: LiveBookingsTableProps) 
                   className={cn(
                     "inline-flex items-center gap-1.5 font-semibold text-dark",
                     "cursor-pointer rounded-md outline-none",
-                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40"
+                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40",
                   )}
                 >
                   Date
@@ -240,7 +363,7 @@ export function LiveBookingsTable({ rows: sourceRows }: LiveBookingsTableProps) 
                   className={cn(
                     "inline-flex items-center gap-1.5 font-semibold text-dark",
                     "cursor-pointer rounded-md outline-none",
-                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40"
+                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40",
                   )}
                 >
                   Time
@@ -284,7 +407,17 @@ export function LiveBookingsTable({ rows: sourceRows }: LiveBookingsTableProps) 
           <TableFooter className="border-0 bg-transparent p-0 hover:bg-transparent">
             <TableRow className="border-0 hover:bg-transparent">
               <TableCell colSpan={colCount} className="p-0">
-                <DashboardShowMore />
+                <DashboardShowMore
+                  hide={!showFooter}
+                  onClick={onShowMore}
+                  loading={loadingOlder}
+                  disabled={loadingOlder}
+                  label={
+                    canLoadOlderRemote && !canShowMoreLocal
+                      ? "Load older entries"
+                      : "Show more"
+                  }
+                />
               </TableCell>
             </TableRow>
           </TableFooter>

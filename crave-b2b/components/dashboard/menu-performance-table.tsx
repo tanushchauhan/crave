@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowDownUp,
@@ -24,9 +24,11 @@ import {
 import { DashboardShowMore } from "@/components/dashboard/dashboard-show-more";
 import { MiniTrendSparkline } from "@/components/dashboard/mini-trend-sparkline";
 import type { MenuPerformanceTableRow } from "@/lib/dashboard/types";
+import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 const colCount = 5;
+const MENU_PAGE_SIZE = 8;
 
 function parseRatePercent(rate: string): number {
   const n = Number.parseFloat(rate.replace("%", "").trim());
@@ -56,21 +58,77 @@ function ariaSortValue(dir: SortDir): "ascending" | "descending" | "none" {
 
 export type MenuPerformanceTableProps = {
   rows: MenuPerformanceTableRow[];
+  restaurantId: string | null;
 };
 
-export function MenuPerformanceTable({ rows: sourceRows }: MenuPerformanceTableProps) {
+export function MenuPerformanceTable({ rows: sourceRows, restaurantId }: MenuPerformanceTableProps) {
+  const [rows, setRows] = useState<MenuPerformanceTableRow[]>(sourceRows);
+  const [visibleCount, setVisibleCount] = useState(MENU_PAGE_SIZE);
   const [foodFilter, setFoodFilter] = useState("");
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const rows = useMemo(
-    () => sourceRows.map((r, defaultOrder) => ({ ...r, defaultOrder })),
-    [sourceRows],
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      setRows(sourceRows);
+      setVisibleCount(MENU_PAGE_SIZE);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [sourceRows]);
+
+  const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleMenuRefetch = useCallback(() => {
+    if (refetchTimer.current) clearTimeout(refetchTimer.current);
+    refetchTimer.current = setTimeout(async () => {
+      refetchTimer.current = null;
+      setRefreshing(true);
+      try {
+        const res = await fetch("/api/dashboard/menu-performance");
+        const data = (await res.json()) as { rows?: MenuPerformanceTableRow[] };
+        if (res.ok && Array.isArray(data.rows)) {
+          setRows(data.rows);
+        }
+      } catch {
+        /* ignore */
+      } finally {
+        setRefreshing(false);
+      }
+    }, 500);
+  }, []);
+
+  useEffect(() => {
+    if (!restaurantId) return;
+    const supabase = createBrowserSupabaseClient();
+    const handler = () => scheduleMenuRefetch();
+    const channel = supabase
+      .channel(`dashboard-menu-${restaurantId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "item_feedback", filter: `restaurant_id=eq.${restaurantId}` },
+        handler,
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "orders", filter: `restaurant_id=eq.${restaurantId}` },
+        handler,
+      )
+      .subscribe();
+
+    return () => {
+      if (refetchTimer.current) clearTimeout(refetchTimer.current);
+      void supabase.removeChannel(channel);
+    };
+  }, [restaurantId, scheduleMenuRefetch]);
+
+  const rowsWithOrder = useMemo(
+    () => rows.map((r, defaultOrder) => ({ ...r, defaultOrder })),
+    [rows],
   );
 
-  const displayedRows = useMemo(() => {
+  const sortedFiltered = useMemo(() => {
     const q = foodFilter.trim().toLowerCase();
-    let list = rows.filter((r) => {
+    let list = rowsWithOrder.filter((r) => {
       if (q === "") return true;
       return r.item.toLowerCase().includes(q);
     });
@@ -92,7 +150,14 @@ export function MenuPerformanceTable({ rows: sourceRows }: MenuPerformanceTableP
     }
 
     return list;
-  }, [rows, foodFilter, sortKey, sortDir]);
+  }, [rowsWithOrder, foodFilter, sortKey, sortDir]);
+
+  const displayedRows = useMemo(
+    () => sortedFiltered.slice(0, visibleCount),
+    [sortedFiltered, visibleCount],
+  );
+
+  const canShowMore = visibleCount < sortedFiltered.length;
 
   function cycleSort(key: SortKey) {
     if (sortKey !== key) {
@@ -127,7 +192,7 @@ export function MenuPerformanceTable({ rows: sourceRows }: MenuPerformanceTableP
                       className={cn(
                         "inline-flex w-full items-center gap-1.5 rounded-md font-semibold text-dark",
                         "cursor-pointer text-left outline-none",
-                        "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40"
+                        "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40",
                       )}
                       aria-label="Filter food item"
                     >
@@ -142,7 +207,7 @@ export function MenuPerformanceTable({ rows: sourceRows }: MenuPerformanceTableP
                       className={cn(
                         "z-50 w-[min(calc(100vw-2rem),280px)] rounded-lg border border-brand/25 bg-white p-3 shadow-md",
                         "data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95",
-                        "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
+                        "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
                       )}
                     >
                       <div className="flex flex-col gap-2">
@@ -173,7 +238,7 @@ export function MenuPerformanceTable({ rows: sourceRows }: MenuPerformanceTableP
                   className={cn(
                     "inline-flex items-center gap-1.5 font-semibold text-dark",
                     "cursor-pointer rounded-md outline-none",
-                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40"
+                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40",
                   )}
                 >
                   Order Rate
@@ -189,7 +254,7 @@ export function MenuPerformanceTable({ rows: sourceRows }: MenuPerformanceTableP
                   onClick={() => cycleSort("likes")}
                   className={cn(
                     "inline-flex w-full items-center justify-center gap-1 rounded-md py-0.5 outline-none",
-                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40"
+                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40",
                   )}
                   aria-label="Likes, sort column"
                 >
@@ -206,7 +271,7 @@ export function MenuPerformanceTable({ rows: sourceRows }: MenuPerformanceTableP
                   onClick={() => cycleSort("dislikes")}
                   className={cn(
                     "inline-flex w-full items-center justify-center gap-1 rounded-md py-0.5 outline-none",
-                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40"
+                    "hover:bg-light/60 focus-visible:ring-2 focus-visible:ring-brand/40",
                   )}
                   aria-label="Dislikes, sort column"
                 >
@@ -224,7 +289,7 @@ export function MenuPerformanceTable({ rows: sourceRows }: MenuPerformanceTableP
                   colSpan={colCount}
                   className="py-10 text-center text-sm text-gray-dark"
                 >
-                  No menu items yet, or performance data is still loading.
+                  {refreshing ? "Refreshing…" : "No menu items yet, or performance data is still loading."}
                 </TableCell>
               </TableRow>
             ) : (
@@ -251,7 +316,12 @@ export function MenuPerformanceTable({ rows: sourceRows }: MenuPerformanceTableP
           <TableFooter className="border-0 bg-transparent p-0 hover:bg-transparent">
             <TableRow className="border-0 hover:bg-transparent">
               <TableCell colSpan={colCount} className="p-0">
-                <DashboardShowMore />
+                <DashboardShowMore
+                  hide={sortedFiltered.length === 0 || !canShowMore}
+                  onClick={() => setVisibleCount((c) => Math.min(c + MENU_PAGE_SIZE, sortedFiltered.length))}
+                  loading={refreshing}
+                  disabled={refreshing}
+                />
               </TableCell>
             </TableRow>
           </TableFooter>

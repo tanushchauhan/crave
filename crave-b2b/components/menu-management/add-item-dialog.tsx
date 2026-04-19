@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -17,6 +17,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { MENU_CATEGORIES } from "@/lib/menu/category-options";
+import { parseDollarsToCents } from "@/lib/menu/types";
 import { cn } from "@/lib/utils";
 
 const brandSelectTrigger =
@@ -28,12 +30,83 @@ const fieldInput =
 const fieldTextarea =
   "min-h-36 rounded-lg border-brand bg-white text-dark shadow-none placeholder:text-gray focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-brand/25 md:text-sm";
 
-type AddItemDialogProps = {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+export type NewMenuItemPayload = {
+  name: string;
+  description: string;
+  price_cents: number;
+  categoryLabel: string;
+  dietary: string;
+  calories: string;
+  image_url: string | null;
 };
 
-export function AddItemDialog({ open, onOpenChange }: AddItemDialogProps) {
+export type AddItemDialogProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  cuisineDisplay: string;
+  onCreate: (payload: NewMenuItemPayload) => Promise<{ ok: boolean; error?: string }>;
+};
+
+export function AddItemDialog({
+  open,
+  onOpenChange,
+  cuisineDisplay,
+  onCreate,
+}: AddItemDialogProps) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [price, setPrice] = useState("");
+  const [calories, setCalories] = useState("");
+  const [dietary, setDietary] = useState("");
+  const [categorySlug, setCategorySlug] = useState<string>("appetizer");
+  const [imageUrl, setImageUrl] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setName("");
+    setDescription("");
+    setPrice("");
+    setCalories("");
+    setDietary("");
+    setCategorySlug("appetizer");
+    setImageUrl("");
+    setError(null);
+  }, [open]);
+
+  async function handleAdd() {
+    setError(null);
+    const price_cents = parseDollarsToCents(price);
+    if (!name.trim()) {
+      setError("Name is required.");
+      return;
+    }
+    if (price_cents === null) {
+      setError("Enter a valid price.");
+      return;
+    }
+    const label =
+      MENU_CATEGORIES.find((c) => c.slug === categorySlug)?.label ?? "Appetizer";
+    setSaving(true);
+    const trimmedUrl = imageUrl.trim();
+    const res = await onCreate({
+      name: name.trim(),
+      description: description.trim(),
+      price_cents,
+      categoryLabel: label,
+      dietary: dietary.trim(),
+      calories: calories.trim(),
+      image_url: trimmedUrl === "" ? null : trimmedUrl,
+    });
+    setSaving(false);
+    if (!res.ok) {
+      setError(res.error ?? "Could not add item.");
+      return;
+    }
+    onOpenChange(false);
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -41,7 +114,7 @@ export function AddItemDialog({ open, onOpenChange }: AddItemDialogProps) {
         overlayClassName="bg-black/55 backdrop-blur-[2px] supports-backdrop-filter:backdrop-blur-sm"
         className={cn(
           "max-h-[min(92vh,calc(100%-2rem))] overflow-y-auto rounded-3xl border-0 bg-white p-6 text-dark shadow-xl ring-0 sm:max-w-5xl sm:p-8",
-          "gap-0 data-[slot=dialog-close]:text-dark"
+          "gap-0 data-[slot=dialog-close]:text-dark",
         )}
       >
         <DialogTitle className="text-left text-xl font-bold tracking-tight text-dark">
@@ -51,59 +124,45 @@ export function AddItemDialog({ open, onOpenChange }: AddItemDialogProps) {
         <div className="mt-6 grid grid-cols-1 gap-6 font-sans md:grid-cols-3 md:gap-8">
           <div className="flex flex-col gap-5">
             <div className="grid gap-2">
-              <span className="font-bold text-dark">Image (File Upload)</span>
-              <label className="group cursor-pointer">
-                <input type="file" accept="image/*" className="sr-only" />
-                <span className="flex aspect-[4/3] max-h-44 w-full items-center justify-center rounded-2xl bg-brand transition-opacity group-hover:opacity-95 group-focus-within:outline-2 group-focus-within:outline-offset-2 group-focus-within:outline-brand">
-                  <Plus
-                    className="size-14 text-white sm:size-16"
-                    strokeWidth={3}
-                    aria-hidden
-                  />
-                  <span className="sr-only">Choose image file</span>
-                </span>
-              </label>
+              <Label htmlFor="add-item-image-url" className="font-bold text-dark">
+                Image URL (optional)
+              </Label>
+              <Input
+                id="add-item-image-url"
+                type="url"
+                value={imageUrl}
+                onChange={(e) => setImageUrl(e.target.value)}
+                placeholder="https://…"
+                className={fieldInput}
+                autoComplete="off"
+              />
             </div>
 
             <div className="grid gap-2">
               <Label htmlFor="add-item-category" className="font-bold text-dark">
                 Category
               </Label>
-              <Select defaultValue="appetizer">
-                <SelectTrigger
-                  id="add-item-category"
-                  className={brandSelectTrigger}
-                >
+              <Select value={categorySlug} onValueChange={setCategorySlug}>
+                <SelectTrigger id="add-item-category" className={brandSelectTrigger}>
                   <SelectValue placeholder="Category" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="appetizer">Appetizer</SelectItem>
-                  <SelectItem value="entree">Entree</SelectItem>
-                  <SelectItem value="dessert">Dessert</SelectItem>
-                  <SelectItem value="salad">Salad</SelectItem>
-                  <SelectItem value="soup">Soup</SelectItem>
-                  <SelectItem value="beverage">Beverage</SelectItem>
+                  {MENU_CATEGORIES.filter((c) => c.slug !== "uncategorized").map(
+                    (c) => (
+                      <SelectItem key={c.slug} value={c.slug}>
+                        {c.label}
+                      </SelectItem>
+                    ),
+                  )}
                 </SelectContent>
               </Select>
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="add-item-cuisine" className="font-bold text-dark">
-                Cuisine
-              </Label>
-              <Select defaultValue="italian">
-                <SelectTrigger
-                  id="add-item-cuisine"
-                  className={brandSelectTrigger}
-                >
-                  <SelectValue placeholder="Cuisine" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="italian">Italian</SelectItem>
-                  <SelectItem value="mexican">Mexican</SelectItem>
-                  <SelectItem value="japanese">Japanese</SelectItem>
-                </SelectContent>
-              </Select>
+              <span className="font-bold text-dark">Cuisine</span>
+              <p className="rounded-lg border border-brand/25 bg-light/80 px-3 py-2 text-sm text-dark">
+                {cuisineDisplay}
+              </p>
             </div>
           </div>
 
@@ -115,22 +174,23 @@ export function AddItemDialog({ open, onOpenChange }: AddItemDialogProps) {
               <Input
                 id="add-item-name"
                 name="name"
-                placeholder="Alfredo Pasta"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Margherita Pizza"
                 className={fieldInput}
               />
             </div>
 
             <div className="grid min-h-0 flex-1 gap-2">
-              <Label
-                htmlFor="add-item-description"
-                className="font-bold text-dark"
-              >
-                Description and Nutritional Information
+              <Label htmlFor="add-item-description" className="font-bold text-dark">
+                Description
               </Label>
               <Textarea
                 id="add-item-description"
                 name="description"
-                placeholder="Alfredo Pasta..."
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Wood-fired crust…"
                 className={cn(fieldTextarea, "min-h-44 resize-y sm:min-h-52")}
               />
             </div>
@@ -149,6 +209,8 @@ export function AddItemDialog({ open, onOpenChange }: AddItemDialogProps) {
                   id="add-item-price"
                   name="price"
                   inputMode="decimal"
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
                   placeholder="19.99"
                   className="h-10 flex-1 rounded-none border-0 bg-white px-3 text-dark shadow-none placeholder:text-gray focus-visible:ring-0 md:text-sm"
                 />
@@ -157,48 +219,49 @@ export function AddItemDialog({ open, onOpenChange }: AddItemDialogProps) {
 
             <div className="grid gap-2">
               <Label htmlFor="add-item-calories" className="font-bold text-dark">
-                Calorie Count
+                Calorie count (optional)
               </Label>
               <Input
                 id="add-item-calories"
                 name="calories"
                 inputMode="numeric"
-                placeholder="1024"
+                value={calories}
+                onChange={(e) => setCalories(e.target.value)}
+                placeholder="480"
                 className={fieldInput}
               />
             </div>
 
             <div className="grid gap-2">
               <Label htmlFor="add-item-dietary" className="font-bold text-dark">
-                Dietary Tags
+                Dietary tags
               </Label>
-              <Select>
-                <SelectTrigger
-                  id="add-item-dietary"
-                  className={cn(brandSelectTrigger, "text-sm")}
-                >
-                  <SelectValue placeholder="Select All From Dropdown" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="halal">Halal</SelectItem>
-                  <SelectItem value="vegetarian">Vegetarian</SelectItem>
-                  <SelectItem value="vegan">Vegan</SelectItem>
-                  <SelectItem value="gluten">Gluten</SelectItem>
-                  <SelectItem value="nuts">Nuts</SelectItem>
-                  <SelectItem value="dairy">Dairy</SelectItem>
-                </SelectContent>
-              </Select>
+              <Input
+                id="add-item-dietary"
+                name="dietary"
+                value={dietary}
+                onChange={(e) => setDietary(e.target.value)}
+                placeholder="Vegetarian, Nuts"
+                className={fieldInput}
+              />
             </div>
           </div>
         </div>
 
+        {error ? (
+          <p className="mt-4 text-sm font-medium text-red-600" role="alert">
+            {error}
+          </p>
+        ) : null}
+
         <div className="mt-8">
           <Button
             type="button"
-            className="h-12 w-full rounded-xl bg-brand text-base font-bold text-white shadow-none hover:bg-brand/95"
-            onClick={() => onOpenChange(false)}
+            disabled={saving}
+            className="h-12 w-full rounded-xl bg-brand text-base font-bold text-white shadow-none hover:bg-brand/95 disabled:opacity-60"
+            onClick={() => void handleAdd()}
           >
-            Add Item
+            {saving ? "Adding…" : "Add Item"}
           </Button>
         </div>
       </DialogContent>

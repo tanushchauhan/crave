@@ -1,46 +1,16 @@
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
+import type { DashboardKpi } from "@/lib/dashboard/types";
 import { cn } from "@/lib/utils";
 
-type Kpi = {
-  label: string;
-  value: string;
-  delta: string;
-  deltaPositive: boolean;
-  caption: string;
+export type DashboardKpiGridProps = {
+  kpis: DashboardKpi[];
 };
 
-const kpis: Kpi[] = [
-  {
-    label: "Today's Bookings",
-    value: "578",
-    delta: "-12.5%",
-    deltaPositive: false,
-    caption: "Trending down 1.5% today",
-  },
-  {
-    label: "Average Party Size",
-    value: "578",
-    delta: "+4.2%",
-    deltaPositive: true,
-    caption: "Trending up 0.8% vs last week",
-  },
-  {
-    label: "Covers This Week",
-    value: "120",
-    delta: "+8.1%",
-    deltaPositive: true,
-    caption: "Ahead of same period last week",
-  },
-  {
-    label: "Sentiment Score",
-    value: "90",
-    delta: "+2.3%",
-    deltaPositive: true,
-    caption: "Based on recent guest feedback",
-  },
-];
+export function DashboardKpiGrid({ kpis }: DashboardKpiGridProps) {
+  if (!kpis.length) {
+    return null;
+  }
 
-export function DashboardKpiGrid() {
   return (
     <div className="grid grid-cols-1 gap-5 sm:gap-6 md:grid-cols-2">
       {kpis.map((k) => (
@@ -54,7 +24,7 @@ export function DashboardKpiGrid() {
             </span>
             <span
               className={cn(
-                "inline-flex shrink-0 items-center gap-1 rounded-full border border-white px-2.5 py-1 text-xs font-bold sm:text-sm"
+                "inline-flex shrink-0 items-center gap-1 rounded-full border border-white px-2.5 py-1 text-xs font-bold sm:text-sm",
               )}
             >
               {k.deltaPositive ? (

@@ -1,6 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowDown,
   ArrowDownUp,
@@ -11,11 +13,15 @@ import {
   SquarePen,
 } from "lucide-react";
 import { Popover as PopoverPrimitive } from "radix-ui";
-import { AddItemDialog } from "@/components/menu-management/add-item-dialog";
+import {
+  AddItemDialog,
+  type NewMenuItemPayload,
+} from "@/components/menu-management/add-item-dialog";
 import {
   EditItemDialog,
-  type MenuItemRow,
+  type EditMenuItemPayload,
 } from "@/components/menu-management/edit-item-dialog";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,104 +34,40 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { createBrowserSupabaseClient } from "@/lib/supabase/client";
+import {
+  cuisineLabelFromTags,
+  dbRowToTableRow,
+  type MenuItemDbRow,
+  type MenuTableRow,
+  type RestaurantSummary,
+} from "@/lib/menu/types";
 import { cn } from "@/lib/utils";
 
-const rawRows: MenuItemRow[] = [
-  {
-    category: "Appetizer",
-    cuisine: "Italian",
-    name: "Alfredo Pasta",
-    dietary: "Halal, Vegetarian",
-    price: "$9.99",
-    description: "blah blah blah blah...",
-  },
-  {
-    category: "Entree",
-    cuisine: "Italian",
-    name: "Alfredo Pasta",
-    dietary: "Nuts, Gluten",
-    price: "$9.99",
-    description: "blah blah blah blah...",
-  },
-  {
-    category: "Dessert",
-    cuisine: "Italian",
-    name: "Alfredo Pasta",
-    dietary: "Halal, Vegetarian",
-    price: "$9.99",
-    description: "blah blah blah blah...",
-  },
-  {
-    category: "Appetizer",
-    cuisine: "Italian",
-    name: "Bruschetta Trio",
-    dietary: "Vegetarian",
-    price: "$8.50",
-    description: "blah blah blah blah...",
-  },
-  {
-    category: "Entree",
-    cuisine: "Italian",
-    name: "Margherita Pizza",
-    dietary: "Gluten, Dairy",
-    price: "$14.00",
-    description: "blah blah blah blah...",
-  },
-  {
-    category: "Entree",
-    cuisine: "Italian",
-    name: "Chicken Parm",
-    dietary: "Gluten",
-    price: "$16.50",
-    description: "blah blah blah blah...",
-  },
-  {
-    category: "Salad",
-    cuisine: "Italian",
-    name: "Caprese Salad",
-    dietary: "Vegetarian, Dairy",
-    price: "$11.25",
-    description: "blah blah blah blah...",
-  },
-  {
-    category: "Soup",
-    cuisine: "Italian",
-    name: "Minestrone",
-    dietary: "Vegan, Gluten",
-    price: "$7.00",
-    description: "blah blah blah blah...",
-  },
-  {
-    category: "Dessert",
-    cuisine: "Italian",
-    name: "Tiramisu",
-    dietary: "Alcohol, Dairy, Gluten",
-    price: "$8.75",
-    description: "blah blah blah blah...",
-  },
-  {
-    category: "Beverage",
-    cuisine: "Italian",
-    name: "Espresso",
-    dietary: "None",
-    price: "$3.50",
-    description: "blah blah blah blah...",
-  },
-  {
-    category: "Appetizer",
-    cuisine: "Italian",
-    name: "Arancini",
-    dietary: "Gluten, Dairy",
-    price: "$10.00",
-    description: "blah blah blah blah...",
-  },
-];
+function compactItemMetadata(parts: {
+  category: string;
+  dietary: string;
+  calories: string;
+}): Record<string, string> {
+  const o: Record<string, string> = {};
+  if (parts.category.trim()) o.category = parts.category.trim();
+  if (parts.dietary.trim()) o.dietary = parts.dietary.trim();
+  if (parts.calories.trim()) o.calories = parts.calories.trim();
+  return o;
+}
 
-type Row = MenuItemRow & { defaultOrder: number };
+function isMenuItemRow(record: unknown): record is MenuItemDbRow {
+  if (!record || typeof record !== "object") return false;
+  const r = record as Record<string, unknown>;
+  return (
+    typeof r.id === "string" &&
+    typeof r.restaurant_id === "string" &&
+    typeof r.name === "string" &&
+    typeof r.price_cents === "number"
+  );
+}
 
-const rows: Row[] = rawRows.map((r, defaultOrder) => ({ ...r, defaultOrder }));
-
-const colCount = 7;
+const colCount = 9;
 
 function uniqueSorted(values: string[]): string[] {
   return [...new Set(values)].sort((a, b) => a.localeCompare(b));
@@ -138,7 +80,7 @@ function rowDietaryTags(dietary: string): string[] {
     .filter(Boolean);
 }
 
-function collectAllDietaryTags(data: Row[]): string[] {
+function collectAllDietaryTags(data: MenuTableRow[]): string[] {
   const seen = new Map<string, string>();
   for (const r of data) {
     for (const part of r.dietary.split(",")) {
@@ -179,13 +121,114 @@ function ariaSortValue(dir: SortDir): "ascending" | "descending" | "none" {
 const popoverContentClass = cn(
   "z-50 w-[min(calc(100vw-2rem),280px)] rounded-lg border border-brand/25 bg-white p-3 shadow-md",
   "data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95",
-  "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
+  "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
 );
 
-export function MenuManagementView() {
+export type MenuManagementViewProps = {
+  restaurant: RestaurantSummary | null;
+  initialItems: MenuItemDbRow[];
+  hasMultipleRestaurants: boolean;
+  /** Session missing (edge case; middleware usually redirects). */
+  signedOut?: boolean;
+  /** Supabase or network error message; shows banner with retry. */
+  loadError?: string | null;
+};
+
+function LoadErrorBanner({ message }: { message: string }) {
+  const router = useRouter();
+  return (
+    <div
+      className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900"
+      role="alert"
+    >
+      <p>{message}</p>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="mt-3 border-brand/40 text-dark hover:bg-white"
+        onClick={() => router.refresh()}
+      >
+        Retry
+      </Button>
+    </div>
+  );
+}
+
+export function MenuManagementView({
+  restaurant,
+  initialItems,
+  hasMultipleRestaurants,
+  signedOut = false,
+  loadError = null,
+}: MenuManagementViewProps) {
+  const cuisineDisplay = cuisineLabelFromTags(restaurant?.cuisine_tags ?? null);
+
+  const [rows, setRows] = useState<MenuTableRow[]>(() =>
+    initialItems.map((r) => dbRowToTableRow(r, cuisineDisplay)),
+  );
+
+  const restaurantId = restaurant?.id ?? null;
+
+  const mergeDbRow = useCallback(
+    (row: MenuItemDbRow) => {
+      const label = cuisineLabelFromTags(restaurant?.cuisine_tags ?? null);
+      return dbRowToTableRow(row, label);
+    },
+    [restaurant?.cuisine_tags],
+  );
+
+  useEffect(() => {
+    if (!restaurantId) return;
+    const supabase = createBrowserSupabaseClient();
+    const channel = supabase
+      .channel(`menu_items:${restaurantId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "menu_items",
+          filter: `restaurant_id=eq.${restaurantId}`,
+        },
+        (payload) => {
+          if (payload.eventType === "INSERT") {
+            const row = payload.new;
+            if (!isMenuItemRow(row)) return;
+            setRows((prev) =>
+              prev.some((p) => p.id === row.id) ? prev : [...prev, mergeDbRow(row)],
+            );
+            return;
+          }
+          if (payload.eventType === "UPDATE") {
+            const row = payload.new;
+            if (!isMenuItemRow(row)) return;
+            setRows((prev) =>
+              prev.map((p) => (p.id === row.id ? mergeDbRow(row) : p)),
+            );
+            return;
+          }
+          if (payload.eventType === "DELETE") {
+            const oldRow = payload.old;
+            const id =
+              oldRow && typeof oldRow === "object" && "id" in oldRow
+                ? String((oldRow as { id: unknown }).id)
+                : null;
+            if (!id) return;
+            setRows((prev) => prev.filter((p) => p.id !== id));
+          }
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [restaurantId, mergeDbRow]);
+
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
-  const [editingRow, setEditingRow] = useState<Row | null>(null);
+  const [editingRow, setEditingRow] = useState<MenuTableRow | null>(null);
 
   const [nameFilter, setNameFilter] = useState("");
   const [descriptionFilter, setDescriptionFilter] = useState("");
@@ -196,13 +239,13 @@ export function MenuManagementView() {
 
   const uniqueCategories = useMemo(
     () => uniqueSorted(rows.map((r) => r.category)),
-    []
+    [rows],
   );
   const uniqueCuisines = useMemo(
     () => uniqueSorted(rows.map((r) => r.cuisine)),
-    []
+    [rows],
   );
-  const dietaryTagOptions = useMemo(() => collectAllDietaryTags(rows), []);
+  const dietaryTagOptions = useMemo(() => collectAllDietaryTags(rows), [rows]);
 
   const displayedRows = useMemo(() => {
     const nameQ = nameFilter.trim().toLowerCase();
@@ -224,7 +267,7 @@ export function MenuManagementView() {
       if (selectedDietaryTags.length > 0) {
         const tags = rowDietaryTags(r.dietary);
         const ok = selectedDietaryTags.every((sel) =>
-          tags.includes(sel.toLowerCase())
+          tags.includes(sel.toLowerCase()),
         );
         if (!ok) return false;
       }
@@ -233,16 +276,16 @@ export function MenuManagementView() {
 
     if (priceSortDir !== null) {
       list = [...list].sort((a, b) => {
-        const cmp =
-          parsePriceNumeric(a.price) - parsePriceNumeric(b.price);
+        const cmp = parsePriceNumeric(a.price) - parsePriceNumeric(b.price);
         return priceSortDir === "asc" ? cmp : -cmp;
       });
     } else {
-      list = [...list].sort((a, b) => a.defaultOrder - b.defaultOrder);
+      list = [...list].sort((a, b) => a.name.localeCompare(b.name));
     }
 
     return list;
   }, [
+    rows,
     nameFilter,
     descriptionFilter,
     selectedDietaryTags,
@@ -270,9 +313,150 @@ export function MenuManagementView() {
     });
   }
 
-  function openEdit(row: Row) {
+  function openEdit(row: MenuTableRow) {
     setEditingRow(row);
     setEditOpen(true);
+  }
+
+  const handleCreate = useCallback(
+    async (payload: NewMenuItemPayload) => {
+      if (!restaurantId) {
+        return { ok: false as const, error: "No restaurant linked to your account." };
+      }
+      const supabase = createBrowserSupabaseClient();
+      const metadata = compactItemMetadata({
+        category: payload.categoryLabel,
+        dietary: payload.dietary,
+        calories: payload.calories,
+      });
+      const { data, error } = await supabase
+        .from("menu_items")
+        .insert({
+          restaurant_id: restaurantId,
+          name: payload.name,
+          description: payload.description === "" ? null : payload.description,
+          price_cents: payload.price_cents,
+          image_url: payload.image_url,
+          is_available: true,
+          metadata,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        return { ok: false as const, error: error.message };
+      }
+      if (data && isMenuItemRow(data)) {
+        setRows((prev) =>
+          prev.some((p) => p.id === data.id) ? prev : [...prev, mergeDbRow(data)],
+        );
+      }
+      return { ok: true as const };
+    },
+    [restaurantId, mergeDbRow],
+  );
+
+  const handleSaveEdit = useCallback(
+    async (id: string, values: EditMenuItemPayload) => {
+      const supabase = createBrowserSupabaseClient();
+      const metadata = compactItemMetadata({
+        category: values.categoryLabel,
+        dietary: values.dietary,
+        calories: values.calories,
+      });
+      const { data, error } = await supabase
+        .from("menu_items")
+        .update({
+          name: values.name,
+          description: values.description === "" ? null : values.description,
+          price_cents: values.price_cents,
+          image_url: values.image_url,
+          is_available: values.is_available,
+          metadata,
+        })
+        .eq("id", id)
+        .select()
+        .single();
+
+      if (error) {
+        return { ok: false as const, error: error.message };
+      }
+      if (data && isMenuItemRow(data)) {
+        setRows((prev) => prev.map((p) => (p.id === id ? mergeDbRow(data) : p)));
+      }
+      return { ok: true as const };
+    },
+    [mergeDbRow],
+  );
+
+  const handleDeleteItem = useCallback(async (id: string) => {
+    const supabase = createBrowserSupabaseClient();
+    const { error } = await supabase.from("menu_items").delete().eq("id", id);
+    if (error) {
+      return { ok: false as const, error: error.message };
+    }
+    setRows((prev) => prev.filter((r) => r.id !== id));
+    setEditOpen(false);
+    setEditingRow(null);
+    return { ok: true as const };
+  }, []);
+
+  const toggleRowAvailable = useCallback(
+    async (row: MenuTableRow, next: boolean) => {
+      const prev = row.is_available;
+      setRows((rws) =>
+        rws.map((r) => (r.id === row.id ? { ...r, is_available: next } : r)),
+      );
+      const supabase = createBrowserSupabaseClient();
+      const { error } = await supabase
+        .from("menu_items")
+        .update({ is_available: next })
+        .eq("id", row.id);
+      if (error) {
+        setRows((rws) =>
+          rws.map((r) => (r.id === row.id ? { ...r, is_available: prev } : r)),
+        );
+      }
+    },
+    [],
+  );
+
+  if (!restaurant) {
+    return (
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-light font-sans">
+        <div className="mx-auto w-full min-w-0 max-w-2xl flex-1 px-5 py-16 sm:px-8">
+          <h1 className="text-3xl font-bold tracking-tight text-dark">
+            Menu Management
+          </h1>
+          <p className="mt-4 text-base leading-relaxed text-gray-dark">
+            {signedOut ? (
+              <>
+                You need to be signed in to manage your menu.{" "}
+                <Link href="/login" className="font-semibold text-brand underline">
+                  Sign in
+                </Link>
+                .
+              </>
+            ) : (
+              <>
+                No restaurant is linked to your account yet. Complete signup with
+                your restaurant name, or claim an existing partner profile, then
+                return here to manage your menu.
+              </>
+            )}
+          </p>
+          {loadError ? <LoadErrorBanner message={loadError} /> : null}
+          {!signedOut && !loadError ? (
+            <Link
+              href="/signup"
+              className="mt-8 inline-flex rounded-xl bg-brand px-6 py-3 text-base font-bold text-white hover:bg-brand/95"
+            >
+              Go to signup
+            </Link>
+          ) : null}
+        </div>
+      </main>
+    );
   }
 
   return (
@@ -282,11 +466,18 @@ export function MenuManagementView() {
           Menu Management
         </h1>
         <p className="mt-4 max-w-4xl text-base leading-relaxed text-gray-dark sm:text-lg">
-          A real-time interface to seamlessly add, edit, price, and disable your
-          menu items. Any changes made here instantly synchronize with the
-          consumer app&apos;s visual menu and the AI voice agent&apos;s
-          knowledge base.
+          Add, edit, price, and disable menu items. Changes sync to Supabase and
+          appear here in real time for your location:{" "}
+          <span className="font-semibold text-dark">{restaurant.name}</span>.
         </p>
+        {hasMultipleRestaurants ? (
+          <p className="mt-3 max-w-4xl text-sm text-amber-800">
+            You have more than one restaurant linked. This page shows the oldest
+            linked restaurant first. Contact support if you need multi-location
+            switching in the UI.
+          </p>
+        ) : null}
+        {loadError ? <LoadErrorBanner message={loadError} /> : null}
 
         <div className="mt-10 min-w-0 sm:mt-12">
           <Card className="gap-0 overflow-hidden border-4 border-brand bg-white py-0 text-dark shadow-none ring-0">
@@ -294,6 +485,9 @@ export function MenuManagementView() {
               <Table>
                 <TableHeader>
                   <TableRow className="border-brand/25 bg-white hover:bg-white">
+                    <TableHead className="w-14 px-2 py-3 text-left text-sm font-bold text-dark sm:px-3">
+                      Photo
+                    </TableHead>
                     <TableHead className="px-3 py-3 sm:px-4">
                       <PopoverPrimitive.Root>
                         <PopoverPrimitive.Trigger asChild>
@@ -302,7 +496,7 @@ export function MenuManagementView() {
                             className={cn(
                               "inline-flex items-center gap-1.5 rounded-md font-bold text-dark outline-none",
                               "hover:bg-light/80 focus-visible:ring-2 focus-visible:ring-brand/40",
-                              categoryFilter !== null && "text-brand"
+                              categoryFilter !== null && "text-brand",
                             )}
                             aria-label="Filter by category"
                           >
@@ -332,7 +526,7 @@ export function MenuManagementView() {
                                   "rounded-md px-2 py-1.5 text-left text-sm text-dark",
                                   "hover:bg-light/80",
                                   categoryFilter === null &&
-                                    "bg-brand/10 font-semibold text-brand"
+                                    "bg-brand/10 font-semibold text-brand",
                                 )}
                               >
                                 All categories
@@ -346,7 +540,7 @@ export function MenuManagementView() {
                                     "rounded-md px-2 py-1.5 text-left text-sm text-dark",
                                     "hover:bg-light/80",
                                     categoryFilter === c &&
-                                      "bg-brand/10 font-semibold text-brand"
+                                      "bg-brand/10 font-semibold text-brand",
                                   )}
                                 >
                                   {c}
@@ -365,7 +559,7 @@ export function MenuManagementView() {
                             className={cn(
                               "inline-flex items-center gap-1.5 rounded-md font-bold text-dark outline-none",
                               "hover:bg-light/80 focus-visible:ring-2 focus-visible:ring-brand/40",
-                              cuisineFilter !== null && "text-brand"
+                              cuisineFilter !== null && "text-brand",
                             )}
                             aria-label="Filter by cuisine"
                           >
@@ -395,7 +589,7 @@ export function MenuManagementView() {
                                   "rounded-md px-2 py-1.5 text-left text-sm text-dark",
                                   "hover:bg-light/80",
                                   cuisineFilter === null &&
-                                    "bg-brand/10 font-semibold text-brand"
+                                    "bg-brand/10 font-semibold text-brand",
                                 )}
                               >
                                 All cuisines
@@ -409,7 +603,7 @@ export function MenuManagementView() {
                                     "rounded-md px-2 py-1.5 text-left text-sm text-dark",
                                     "hover:bg-light/80",
                                     cuisineFilter === c &&
-                                      "bg-brand/10 font-semibold text-brand"
+                                      "bg-brand/10 font-semibold text-brand",
                                   )}
                                 >
                                   {c}
@@ -428,7 +622,7 @@ export function MenuManagementView() {
                             className={cn(
                               "inline-flex items-center gap-1.5 rounded-md font-bold text-dark outline-none",
                               "hover:bg-light/80 focus-visible:ring-2 focus-visible:ring-brand/40",
-                              nameFilter.trim() !== "" && "text-brand"
+                              nameFilter.trim() !== "" && "text-brand",
                             )}
                             aria-label="Filter by name"
                           >
@@ -476,7 +670,7 @@ export function MenuManagementView() {
                             className={cn(
                               "inline-flex items-center gap-1.5 rounded-md font-bold text-dark outline-none",
                               "hover:bg-light/80 focus-visible:ring-2 focus-visible:ring-brand/40",
-                              selectedDietaryTags.length > 0 && "text-brand"
+                              selectedDietaryTags.length > 0 && "text-brand",
                             )}
                             aria-label="Filter by dietary tags"
                           >
@@ -493,7 +687,10 @@ export function MenuManagementView() {
                             side="bottom"
                             align="start"
                             sideOffset={6}
-                            className={cn(popoverContentClass, "w-[min(calc(100vw-2rem),320px)]")}
+                            className={cn(
+                              popoverContentClass,
+                              "w-[min(calc(100vw-2rem),320px)]",
+                            )}
                           >
                             <div className="mb-2 flex items-center justify-between gap-2">
                               <p className="text-xs font-medium text-gray-dark">
@@ -512,7 +709,7 @@ export function MenuManagementView() {
                             <div className="flex max-h-52 flex-col gap-1.5 overflow-y-auto pr-0.5">
                               {dietaryTagOptions.map((tag) => {
                                 const checked = selectedDietaryTags.some(
-                                  (t) => t.toLowerCase() === tag.toLowerCase()
+                                  (t) => t.toLowerCase() === tag.toLowerCase(),
                                 );
                                 return (
                                   <label
@@ -544,7 +741,7 @@ export function MenuManagementView() {
                         className={cn(
                           "inline-flex items-center gap-1.5 font-bold text-dark outline-none",
                           "cursor-pointer rounded-md",
-                          "hover:bg-light/80 focus-visible:ring-2 focus-visible:ring-brand/40"
+                          "hover:bg-light/80 focus-visible:ring-2 focus-visible:ring-brand/40",
                         )}
                       >
                         Price
@@ -559,7 +756,7 @@ export function MenuManagementView() {
                             className={cn(
                               "inline-flex items-center gap-1.5 rounded-md font-bold text-dark outline-none",
                               "hover:bg-light/80 focus-visible:ring-2 focus-visible:ring-brand/40",
-                              descriptionFilter.trim() !== "" && "text-brand"
+                              descriptionFilter.trim() !== "" && "text-brand",
                             )}
                             aria-label="Filter by description"
                           >
@@ -602,46 +799,87 @@ export function MenuManagementView() {
                       </PopoverPrimitive.Root>
                     </TableHead>
                     <TableHead className="px-3 py-3 text-left font-bold text-dark sm:px-4">
+                      Available
+                    </TableHead>
+                    <TableHead className="px-3 py-3 text-left font-bold text-dark sm:px-4">
                       Edit
                     </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {displayedRows.map((r) => (
-                    <TableRow
-                      key={r.defaultOrder}
-                      className="border-brand/15 hover:bg-light/80"
-                    >
-                      <TableCell className="px-3 py-3 text-dark sm:px-4">
-                        {r.category}
-                      </TableCell>
-                      <TableCell className="px-3 py-3 text-dark sm:px-4">
-                        {r.cuisine}
-                      </TableCell>
-                      <TableCell className="px-3 py-3 text-dark sm:px-4">
-                        {r.name}
-                      </TableCell>
-                      <TableCell className="px-3 py-3 text-dark sm:px-4">
-                        {r.dietary}
-                      </TableCell>
-                      <TableCell className="px-3 py-3 text-dark sm:px-4">
-                        {r.price}
-                      </TableCell>
-                      <TableCell className="max-w-[12rem] whitespace-normal px-3 py-3 text-dark sm:max-w-xs sm:px-4">
-                        {r.description}
-                      </TableCell>
-                      <TableCell className="px-3 py-3 sm:px-4">
-                        <button
-                          type="button"
-                          onClick={() => openEdit(r)}
-                          className="inline-flex text-brand transition-opacity hover:opacity-85"
-                          aria-label={`Edit ${r.name}`}
-                        >
-                          <SquarePen className="size-5" strokeWidth={2.25} />
-                        </button>
+                  {displayedRows.length === 0 ? (
+                    <TableRow className="border-brand/15 hover:bg-light/80">
+                      <TableCell
+                        colSpan={colCount}
+                        className="px-4 py-10 text-center text-gray-dark"
+                      >
+                        {rows.length === 0
+                          ? "No menu items yet. Add your first item below."
+                          : "No items match your filters."}
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : (
+                    displayedRows.map((r) => (
+                      <TableRow
+                        key={r.id}
+                        className="border-brand/15 hover:bg-light/80"
+                      >
+                        <TableCell className="px-2 py-2 sm:px-3">
+                          {r.image_url ? (
+                            // eslint-disable-next-line @next/next/no-img-element -- arbitrary partner URLs
+                            <img
+                              src={r.image_url}
+                              alt=""
+                              width={40}
+                              height={40}
+                              className="size-10 rounded-md border border-brand/15 object-cover"
+                            />
+                          ) : (
+                            <span className="text-xs text-gray-dark">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="px-3 py-3 text-dark sm:px-4">
+                          {r.category}
+                        </TableCell>
+                        <TableCell className="px-3 py-3 text-dark sm:px-4">
+                          {r.cuisine}
+                        </TableCell>
+                        <TableCell className="px-3 py-3 text-dark sm:px-4">
+                          {r.name}
+                        </TableCell>
+                        <TableCell className="px-3 py-3 text-dark sm:px-4">
+                          {r.dietary || "—"}
+                        </TableCell>
+                        <TableCell className="px-3 py-3 text-dark sm:px-4">
+                          {r.price}
+                        </TableCell>
+                        <TableCell className="max-w-[12rem] whitespace-normal px-3 py-3 text-dark sm:max-w-xs sm:px-4">
+                          {r.description || "—"}
+                        </TableCell>
+                        <TableCell className="px-3 py-3 sm:px-4">
+                          <input
+                            type="checkbox"
+                            checked={r.is_available}
+                            onChange={(e) =>
+                              void toggleRowAvailable(r, e.target.checked)
+                            }
+                            className="size-4 rounded border-brand accent-brand"
+                            aria-label={`${r.is_available ? "Disable" : "Enable"} ${r.name}`}
+                          />
+                        </TableCell>
+                        <TableCell className="px-3 py-3 sm:px-4">
+                          <button
+                            type="button"
+                            onClick={() => openEdit(r)}
+                            className="inline-flex text-brand transition-opacity hover:opacity-85"
+                            aria-label={`Edit ${r.name}`}
+                          >
+                            <SquarePen className="size-5" strokeWidth={2.25} />
+                          </button>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
                 <TableFooter className="border-0 bg-transparent p-0 hover:bg-transparent">
                   <TableRow className="border-0 hover:bg-transparent">
@@ -667,7 +905,12 @@ export function MenuManagementView() {
         </div>
       </div>
 
-      <AddItemDialog open={addOpen} onOpenChange={setAddOpen} />
+      <AddItemDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        cuisineDisplay={cuisineDisplay}
+        onCreate={handleCreate}
+      />
       <EditItemDialog
         open={editOpen}
         onOpenChange={(open) => {
@@ -675,6 +918,9 @@ export function MenuManagementView() {
           if (!open) setEditingRow(null);
         }}
         item={editingRow}
+        cuisineDisplay={cuisineDisplay}
+        onSave={handleSaveEdit}
+        onDelete={handleDeleteItem}
       />
     </main>
   );
