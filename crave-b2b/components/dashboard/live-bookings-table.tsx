@@ -5,10 +5,14 @@ import {
   ArrowDown,
   ArrowDownUp,
   ArrowUp,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
   Search,
 } from "lucide-react";
 import { Popover as PopoverPrimitive } from "radix-ui";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -20,15 +24,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { DashboardShowMore } from "@/components/dashboard/dashboard-show-more";
 import { mergeLiveRowsAfterRefetch } from "@/lib/dashboard/live-rows";
 import type { LiveBookingTableRow } from "@/lib/dashboard/types";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 const colCount = 6;
-const INITIAL_VISIBLE = 10;
-const PAGE_STEP = 10;
+/** Rows per page for the live table */
+const PAGE_SIZE = 10;
 
 function parsePartySize(size: string): number {
   const n = Number.parseInt(size, 10);
@@ -89,21 +92,26 @@ export function LiveBookingsTable({
   mergedCapHit = false,
 }: LiveBookingsTableProps) {
   const [rows, setRows] = useState<LiveBookingTableRow[]>(initialRows);
-  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
+  const [pageIndex, setPageIndex] = useState(0);
   const [phoneFilter, setPhoneFilter] = useState("");
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderExhausted, setOlderExhausted] = useState(false);
+  const pendingJumpToLastPage = useRef(false);
 
   useEffect(() => {
     const id = requestAnimationFrame(() => {
       setRows(initialRows);
-      setVisibleCount(INITIAL_VISIBLE);
+      setPageIndex(0);
       setOlderExhausted(false);
     });
     return () => cancelAnimationFrame(id);
   }, [initialRows]);
+
+  useEffect(() => {
+    setPageIndex(0);
+  }, [phoneFilter, sortKey, sortDir]);
 
   const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scheduleRefetch = useCallback(() => {
@@ -176,16 +184,36 @@ export function LiveBookingsTable({
     return list;
   }, [rows, phoneFilter, sortKey, sortDir]);
 
+  const totalPages = Math.max(1, Math.ceil(sortedFiltered.length / PAGE_SIZE));
+
+  useEffect(() => {
+    setPageIndex((p) => Math.min(p, totalPages - 1));
+  }, [totalPages]);
+
+  useEffect(() => {
+    if (!pendingJumpToLastPage.current) return;
+    pendingJumpToLastPage.current = false;
+    const last = Math.max(0, Math.ceil(sortedFiltered.length / PAGE_SIZE) - 1);
+    setPageIndex(last);
+  }, [sortedFiltered.length]);
+
   const displayedRows = useMemo(
-    () => sortedFiltered.slice(0, visibleCount),
-    [sortedFiltered, visibleCount],
+    () =>
+      sortedFiltered.slice(pageIndex * PAGE_SIZE, (pageIndex + 1) * PAGE_SIZE),
+    [sortedFiltered, pageIndex],
   );
 
-  const canShowMoreLocal = visibleCount < sortedFiltered.length;
+  const rangeStart = sortedFiltered.length === 0 ? 0 : pageIndex * PAGE_SIZE + 1;
+  const rangeEnd = Math.min(sortedFiltered.length, (pageIndex + 1) * PAGE_SIZE);
+
+  const onPrevPage = () => setPageIndex((p) => Math.max(0, p - 1));
+  const onNextPage = () => setPageIndex((p) => Math.min(totalPages - 1, p + 1));
+
+  const isOnLastPage = pageIndex >= totalPages - 1;
   const canLoadOlderRemote =
     mergedCapHit &&
     !olderExhausted &&
-    visibleCount >= sortedFiltered.length &&
+    isOnLastPage &&
     sortedFiltered.length > 0;
 
   async function loadOlderFromApi() {
@@ -216,7 +244,7 @@ export function LiveBookingsTable({
         return [...prev, ...add].sort((a, b) => b.atMs - a.atMs);
       });
       if (appended > 0) {
-        setVisibleCount((c) => c + appended);
+        pendingJumpToLastPage.current = true;
       } else {
         setOlderExhausted(true);
       }
@@ -225,19 +253,8 @@ export function LiveBookingsTable({
     }
   }
 
-  function onShowMore() {
-    if (canShowMoreLocal) {
-      setVisibleCount((c) => Math.min(c + PAGE_STEP, sortedFiltered.length));
-      return;
-    }
-    if (canLoadOlderRemote) {
-      void loadOlderFromApi();
-    }
-  }
-
-  const showFooter =
-    sortedFiltered.length > 0 &&
-    (canShowMoreLocal || canLoadOlderRemote || loadingOlder);
+  const showPaginationFooter = sortedFiltered.length > 0;
+  const showLoadOlderRow = sortedFiltered.length > 0 && (canLoadOlderRemote || loadingOlder);
 
   function cycleSort(key: SortKey) {
     if (sortKey !== key) {
@@ -405,21 +422,75 @@ export function LiveBookingsTable({
             )}
           </TableBody>
           <TableFooter className="border-0 bg-transparent p-0 hover:bg-transparent">
-            <TableRow className="border-0 hover:bg-transparent">
-              <TableCell colSpan={colCount} className="p-0">
-                <DashboardShowMore
-                  hide={!showFooter}
-                  onClick={onShowMore}
-                  loading={loadingOlder}
-                  disabled={loadingOlder}
-                  label={
-                    canLoadOlderRemote && !canShowMoreLocal
-                      ? "Load older entries"
-                      : "Show more"
-                  }
-                />
-              </TableCell>
-            </TableRow>
+            {showPaginationFooter ? (
+              <TableRow className="border-0 hover:bg-transparent">
+                <TableCell colSpan={colCount} className="p-0">
+                  <div
+                    className="flex flex-col gap-0 border-t border-brand/15 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4 sm:py-3"
+                    role="navigation"
+                    aria-label="Live bookings pagination"
+                  >
+                    <p className="order-2 px-4 py-2 text-center text-xs text-gray-dark sm:order-1 sm:px-0 sm:py-0 sm:text-left sm:text-sm">
+                      Showing{" "}
+                      <span className="font-semibold text-dark">
+                        {rangeStart}–{rangeEnd}
+                      </span>{" "}
+                      of{" "}
+                      <span className="font-semibold text-dark">{sortedFiltered.length}</span>
+                    </p>
+                    <div className="order-1 flex items-center justify-center gap-2 sm:order-2 sm:justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="min-w-[5.5rem] border-brand/40 font-semibold text-dark hover:bg-light/80"
+                        onClick={onPrevPage}
+                        disabled={pageIndex <= 0}
+                        aria-label="Previous page"
+                      >
+                        <ChevronLeft className="size-4" aria-hidden />
+                        Previous
+                      </Button>
+                      <span className="min-w-[6rem] text-center text-sm font-semibold tabular-nums text-dark">
+                        Page {pageIndex + 1} of {totalPages}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="min-w-[5.5rem] border-brand/40 font-semibold text-dark hover:bg-light/80"
+                        onClick={onNextPage}
+                        disabled={pageIndex >= totalPages - 1}
+                        aria-label="Next page"
+                      >
+                        Next
+                        <ChevronRight className="size-4" aria-hidden />
+                      </Button>
+                    </div>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ) : null}
+            {showLoadOlderRow ? (
+              <TableRow className="border-0 hover:bg-transparent">
+                <TableCell colSpan={colCount} className="p-0">
+                  <button
+                    type="button"
+                    onClick={() => void loadOlderFromApi()}
+                    disabled={loadingOlder || !canLoadOlderRemote}
+                    className={cn(
+                      "flex w-full items-center justify-center gap-2 bg-brand py-3 text-sm font-bold text-white transition-colors hover:bg-brand/95",
+                      (loadingOlder || !canLoadOlderRemote) && "cursor-not-allowed opacity-70",
+                    )}
+                  >
+                    {loadingOlder ? (
+                      <Loader2 className="size-4 shrink-0 animate-spin" strokeWidth={2.5} aria-hidden />
+                    ) : null}
+                    {loadingOlder ? "Loading…" : "Load older entries"}
+                  </button>
+                </TableCell>
+              </TableRow>
+            ) : null}
           </TableFooter>
         </Table>
       </CardContent>

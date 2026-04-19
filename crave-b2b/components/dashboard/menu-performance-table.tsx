@@ -5,11 +5,14 @@ import {
   ArrowDown,
   ArrowDownUp,
   ArrowUp,
+  ChevronLeft,
+  ChevronRight,
   ThumbsDown,
   ThumbsUp,
 } from "lucide-react";
 import { Popover as PopoverPrimitive } from "radix-ui";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -21,14 +24,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { DashboardShowMore } from "@/components/dashboard/dashboard-show-more";
 import { MiniTrendSparkline } from "@/components/dashboard/mini-trend-sparkline";
 import type { MenuPerformanceTableRow } from "@/lib/dashboard/types";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 const colCount = 5;
-const MENU_PAGE_SIZE = 8;
+/** Rows per page (matches previous “show more” step) */
+const PAGE_SIZE = 8;
 
 function parseRatePercent(rate: string): number {
   const n = Number.parseFloat(rate.replace("%", "").trim());
@@ -63,7 +66,7 @@ export type MenuPerformanceTableProps = {
 
 export function MenuPerformanceTable({ rows: sourceRows, restaurantId }: MenuPerformanceTableProps) {
   const [rows, setRows] = useState<MenuPerformanceTableRow[]>(sourceRows);
-  const [visibleCount, setVisibleCount] = useState(MENU_PAGE_SIZE);
+  const [pageIndex, setPageIndex] = useState(0);
   const [foodFilter, setFoodFilter] = useState("");
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
@@ -72,10 +75,14 @@ export function MenuPerformanceTable({ rows: sourceRows, restaurantId }: MenuPer
   useEffect(() => {
     const id = requestAnimationFrame(() => {
       setRows(sourceRows);
-      setVisibleCount(MENU_PAGE_SIZE);
+      setPageIndex(0);
     });
     return () => cancelAnimationFrame(id);
   }, [sourceRows]);
+
+  useEffect(() => {
+    setPageIndex(0);
+  }, [foodFilter, sortKey, sortDir]);
 
   const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scheduleMenuRefetch = useCallback(() => {
@@ -152,12 +159,25 @@ export function MenuPerformanceTable({ rows: sourceRows, restaurantId }: MenuPer
     return list;
   }, [rowsWithOrder, foodFilter, sortKey, sortDir]);
 
+  const totalPages = Math.max(1, Math.ceil(sortedFiltered.length / PAGE_SIZE));
+
+  useEffect(() => {
+    setPageIndex((p) => Math.min(p, totalPages - 1));
+  }, [totalPages]);
+
   const displayedRows = useMemo(
-    () => sortedFiltered.slice(0, visibleCount),
-    [sortedFiltered, visibleCount],
+    () =>
+      sortedFiltered.slice(pageIndex * PAGE_SIZE, (pageIndex + 1) * PAGE_SIZE),
+    [sortedFiltered, pageIndex],
   );
 
-  const canShowMore = visibleCount < sortedFiltered.length;
+  const rangeStart = sortedFiltered.length === 0 ? 0 : pageIndex * PAGE_SIZE + 1;
+  const rangeEnd = Math.min(sortedFiltered.length, (pageIndex + 1) * PAGE_SIZE);
+
+  const onPrevPage = () => setPageIndex((p) => Math.max(0, p - 1));
+  const onNextPage = () => setPageIndex((p) => Math.min(totalPages - 1, p + 1));
+
+  const showPaginationFooter = sortedFiltered.length > 0;
 
   function cycleSort(key: SortKey) {
     if (sortKey !== key) {
@@ -314,16 +334,55 @@ export function MenuPerformanceTable({ rows: sourceRows, restaurantId }: MenuPer
             )}
           </TableBody>
           <TableFooter className="border-0 bg-transparent p-0 hover:bg-transparent">
-            <TableRow className="border-0 hover:bg-transparent">
-              <TableCell colSpan={colCount} className="p-0">
-                <DashboardShowMore
-                  hide={sortedFiltered.length === 0 || !canShowMore}
-                  onClick={() => setVisibleCount((c) => Math.min(c + MENU_PAGE_SIZE, sortedFiltered.length))}
-                  loading={refreshing}
-                  disabled={refreshing}
-                />
-              </TableCell>
-            </TableRow>
+            {showPaginationFooter ? (
+              <TableRow className="border-0 hover:bg-transparent">
+                <TableCell colSpan={colCount} className="p-0">
+                  <div
+                    className="flex flex-col gap-0 border-t border-brand/15 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4 sm:py-3"
+                    role="navigation"
+                    aria-label="Menu performance pagination"
+                  >
+                    <p className="order-2 px-4 py-2 text-center text-xs text-gray-dark sm:order-1 sm:px-0 sm:py-0 sm:text-left sm:text-sm">
+                      Showing{" "}
+                      <span className="font-semibold text-dark">
+                        {rangeStart}–{rangeEnd}
+                      </span>{" "}
+                      of{" "}
+                      <span className="font-semibold text-dark">{sortedFiltered.length}</span>
+                    </p>
+                    <div className="order-1 flex items-center justify-center gap-2 sm:order-2 sm:justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="min-w-[5.5rem] border-brand/40 font-semibold text-dark hover:bg-light/80"
+                        onClick={onPrevPage}
+                        disabled={pageIndex <= 0 || refreshing}
+                        aria-label="Previous page"
+                      >
+                        <ChevronLeft className="size-4" aria-hidden />
+                        Previous
+                      </Button>
+                      <span className="min-w-[6rem] text-center text-sm font-semibold tabular-nums text-dark">
+                        Page {pageIndex + 1} of {totalPages}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="min-w-[5.5rem] border-brand/40 font-semibold text-dark hover:bg-light/80"
+                        onClick={onNextPage}
+                        disabled={pageIndex >= totalPages - 1 || refreshing}
+                        aria-label="Next page"
+                      >
+                        Next
+                        <ChevronRight className="size-4" aria-hidden />
+                      </Button>
+                    </div>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ) : null}
           </TableFooter>
         </Table>
       </CardContent>
