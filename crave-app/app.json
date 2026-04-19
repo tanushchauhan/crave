@@ -15,7 +15,10 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "us.trycrave.app"
+      "bundleIdentifier": "us.trycrave.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Crave uses your location to show restaurants near you on the recommendations tab."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -25,7 +28,9 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "permissions": [
-        "android.permission.RECORD_AUDIO"
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
       ],
       "package": "com.hawkings232.myapp"
     },
@@ -41,6 +46,12 @@
         {
           "photosPermission": "Allow Crave to choose photos for your profile and receipts.",
           "cameraPermission": "Allow Crave to use the camera for your profile and receipts."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Crave uses your location to show restaurants near you on the recommendations tab."
         }
       ],
       "expo-font",

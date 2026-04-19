@@ -34,3 +34,8 @@ enable_signup = false
 # Edge: match-receipt-items uses x-crave-internal-secret, not the user JWT (docs/supabase.md §11).
 [functions.match-receipt-items]
 verify_jwt = false
+
+# Edge: Supabase may issue ES256 access tokens; the Functions gateway can reject them with
+# UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM before the worker runs. We validate with getUser() inside the function.
+[functions.recommend]
+verify_jwt = false

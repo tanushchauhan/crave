@@ -7,8 +7,16 @@ import MainAppPageHeader from "@/components/MainAppPageHeader";
 import RestaurantRecommendationCard from "@/components/RestaurantRecommendationCard";
 import VoiceAssistantFab from "@/components/VoiceAssistantFab";
 import { DEFAULT_RESTAURANT, type Restaurant } from "@/constants/orderingMockData";
-import { useCallback, useState } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { getRecommendGeoForRequest } from "@/lib/recommendLocation";
+import { fetchRestaurantRecommendations } from "@/lib/recommendationsApi";
+import { useCallback, useEffect, useState } from "react";
+import {
+    ActivityIndicator,
+    ScrollView,
+    Text,
+    TouchableOpacity,
+    View,
+} from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import FinishSetupTalkToVoice from "./FinishSetupTalkToVoice";
@@ -33,6 +41,53 @@ export default function RecommendationsPage() {
     const [addGroupModalOpen, setAddGroupModalOpen] = useState(false);
     const [orderModalRestaurant, setOrderModalRestaurant] =
         useState<Restaurant | null>(null);
+    const [recommendations, setRecommendations] = useState<Restaurant[]>([]);
+    const [recLoading, setRecLoading] = useState(true);
+    const [recError, setRecError] = useState<string | null>(null);
+    const [usedNearMe, setUsedNearMe] = useState(false);
+
+    useEffect(() => {
+        if (screen.name !== "recommendations" || activeTab !== "recommendations") {
+            return;
+        }
+        let cancelled = false;
+        setRecLoading(true);
+        setRecError(null);
+        void (async () => {
+            const geo = await getRecommendGeoForRequest();
+            if (cancelled) {
+                return;
+            }
+            setUsedNearMe(geo !== null);
+            try {
+                const rows = await fetchRestaurantRecommendations(
+                    12,
+                    geo
+                        ? {
+                              lat: geo.latitude,
+                              lng: geo.longitude,
+                          }
+                        : null,
+                );
+                if (!cancelled) {
+                    setRecommendations(rows);
+                }
+            } catch (e: unknown) {
+                if (!cancelled) {
+                    setRecError(
+                        e instanceof Error ? e.message : "Failed to load",
+                    );
+                }
+            } finally {
+                if (!cancelled) {
+                    setRecLoading(false);
+                }
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [screen.name, activeTab]);
 
     const onVoicePress = useCallback(() => {
         setVoiceOpen(true);
@@ -150,12 +205,83 @@ export default function RecommendationsPage() {
                         title="Recommendations For Today"
                         align="center"
                         contentInsetClassName="px-4"
+                        subtitle={
+                            usedNearMe && !recLoading && !recError
+                                ? "Showing restaurants near you."
+                                : undefined
+                        }
                     />
-                    <RestaurantRecommendationCard
-                        restaurant={DEFAULT_RESTAURANT}
-                        onOrderPress={handleOrderPress}
-                        onMorePress={() => {}}
-                    />
+                    {recLoading ? (
+                        <View className="py-16 items-center justify-center">
+                            <ActivityIndicator size="large" color="#f5861f" />
+                            <Text className="mt-3 font-josefin text-[14px] text-[#888]">
+                                Loading picks…
+                            </Text>
+                        </View>
+                    ) : recError ? (
+                        <View className="mx-4 mt-4 rounded-2xl bg-[#fff3e8] px-4 py-4">
+                            <Text className="font-josefin-bold text-[15px] text-[#c45a00]">
+                                Could not load recommendations
+                            </Text>
+                            <Text className="mt-2 font-josefin text-[13px] text-[#666]">
+                                {recError}
+                            </Text>
+                            <TouchableOpacity
+                                className="mt-3 self-start rounded-full bg-[#f5861f] px-4 py-2"
+                                onPress={() => {
+                                    setRecError(null);
+                                    setRecLoading(true);
+                                    void (async () => {
+                                        const geo =
+                                            await getRecommendGeoForRequest();
+                                        setUsedNearMe(geo !== null);
+                                        try {
+                                            const rows =
+                                                await fetchRestaurantRecommendations(
+                                                    12,
+                                                    geo
+                                                        ? {
+                                                              lat: geo.latitude,
+                                                              lng: geo.longitude,
+                                                          }
+                                                        : null,
+                                                );
+                                            setRecommendations(rows);
+                                        } catch (e: unknown) {
+                                            setRecError(
+                                                e instanceof Error
+                                                    ? e.message
+                                                    : "Failed to load",
+                                            );
+                                        } finally {
+                                            setRecLoading(false);
+                                        }
+                                    })();
+                                }}
+                            >
+                                <Text className="font-josefin-bold text-[14px] text-white">
+                                    Retry
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
+                    ) : recommendations.length === 0 ? (
+                        <View className="mx-4 mt-4">
+                            <Text className="font-josefin text-[14px] text-[#666]">
+                                No restaurants returned yet. Seed the project
+                                (tools/supabase-seed) or check Supabase Auth is
+                                signed in.
+                            </Text>
+                        </View>
+                    ) : (
+                        recommendations.map((r) => (
+                            <RestaurantRecommendationCard
+                                key={r.id}
+                                restaurant={r}
+                                onOrderPress={handleOrderPress}
+                                onMorePress={() => {}}
+                            />
+                        ))
+                    )}
                 </ScrollView>
 
                 <VoiceAssistantFab
