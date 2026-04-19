@@ -1,0 +1,1 @@
+# TTF files are downloaded at zip/deploy time (see deploy-aws-from-env.sh zip_lambda).

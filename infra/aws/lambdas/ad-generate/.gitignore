@@ -1,2 +1,4 @@
 node_modules/
 function.zip
+fonts/*.ttf
+fonts/*.otf

@@ -1,3 +1,6 @@
+# Deployment-specific API catalog for internal clients (never commit)
+api_endpoints.md
+
 # env files (secrets — never commit)
 .env
 .env.*

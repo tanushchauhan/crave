@@ -28,7 +28,7 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AWS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 POL="$AWS_ROOT/policies"
 GEN="$AWS_ROOT/.generated"
 ENV_FILE="${ENV_FILE:-$REPO_ROOT/.env}"
@@ -102,7 +102,37 @@ zip_lambda() {
     exit 1
   }
   echo "-- npm + zip: $name"
-  (cd "$dir" && rm -f function.zip && npm install --omit=dev --no-audit --no-fund && zip -rq function.zip . -x '*.git*' -x '*.zip' -x '*.md')
+  (
+    cd "$dir" || exit 1
+    rm -f function.zip
+    npm install --omit=dev --no-audit --no-fund
+    if [[ "$name" == "ad-generate" ]]; then
+      mkdir -p fonts
+      echo "-- fonts for Satori overlay (Noto Sans; Lambda has no system fonts)"
+      if [[ ! -s fonts/NotoSans-Regular.ttf ]]; then
+        curl -fsSL -o fonts/NotoSans-Regular.ttf \
+          "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf"
+      fi
+      if [[ ! -s fonts/NotoSans-Bold.ttf ]]; then
+        curl -fsSL -o fonts/NotoSans-Bold.ttf \
+          "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSans/NotoSans-Bold.ttf"
+      fi
+      if [[ "${AD_BUNDLE_CJK_FONT:-false}" == "true" ]]; then
+        if [[ ! -s fonts/NotoSansSC-Regular.otf ]]; then
+          echo "-- bundling Noto Sans SC for CJK coverage (AD_BUNDLE_CJK_FONT=true)"
+          curl -fsSL -o fonts/NotoSansSC-Regular.otf \
+            "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansSC-Regular.otf" || \
+            echo "!! NotoSansSC fetch failed; continuing without CJK"
+        fi
+      fi
+    fi
+    # ad-generate uses sharp + @resvg/resvg-js: from macOS/Windows, force linux-x64 binaries for Lambda.
+    if [[ "$name" == "ad-generate" ]] && [[ "$(uname -s)" != "Linux" ]]; then
+      rm -rf node_modules/sharp node_modules/@resvg
+      npm install --omit=dev --no-audit --no-fund --os=linux --cpu=x64 sharp @resvg/resvg-js
+    fi
+    zip -rq function.zip . -x '*.git*' -x '*.zip' -x '*.md'
+  )
 }
 
 write_receipt_ocr_env() {
@@ -147,7 +177,25 @@ write_ad_generate_env() {
 import json, os, pathlib
 gen = pathlib.Path(os.environ["GEN"])
 b = (os.environ.get("CRAVE_ASSETS_BUCKET") or "").strip()
-v = {"ASSETS_BUCKET": b} if b else {"CRAVE_AD_STUB": "1"}
+v = {}
+if b:
+    v["ASSETS_BUCKET"] = b
+else:
+    v["CRAVE_AD_STUB"] = "1"
+for k in (
+    "BEDROCK_TEXT_MODEL_ID",
+    "AD_IMAGE_MODEL_ID",
+    "AD_IMAGE_PIXEL_SIZE",
+    "AD_NOVA_QUALITY",
+    "AD_IMAGE_ASPECT_RATIO",
+    "AD_OVERLAY_WITH_SVG",
+    "AD_OVERLAY_RENDERER",
+    "AD_BUNDLE_CJK_FONT",
+    "AD_LOGO_IMAGE_INDEX",
+    "AD_MAX_SLIDES_PER_DESIGN",
+):
+    if (os.environ.get(k) or "").strip():
+        v[k] = os.environ[k].strip()
 (gen / "lambda-env-ad-generate.json").write_text(json.dumps({"Variables": v}, indent=2))
 PY
 }
@@ -212,7 +260,51 @@ if [[ "$SKIP_LAMBDAS" -eq 0 ]]; then
 
   upsert_lambda crave-receipt-ocr "$AWS_ROOT/lambdas/receipt-ocr/function.zip" index.handler 1024 60 "$GEN/lambda-env-receipt-ocr.json"
   upsert_lambda crave-bedrock-proxy "$AWS_ROOT/lambdas/bedrock-proxy/function.zip" index.handler 512 30 "$GEN/lambda-env-bedrock-proxy.json"
-  upsert_lambda crave-ad-generate "$AWS_ROOT/lambdas/ad-generate/function.zip" index.handler 512 30 "$GEN/lambda-env-ad-generate.json"
+  upsert_lambda crave-ad-generate "$AWS_ROOT/lambdas/ad-generate/function.zip" index.handler 1024 90 "$GEN/lambda-env-ad-generate.json"
+
+  # Lambda function URL: HTTP API integrations are capped at 30s; function URL uses the Lambda timeout (e.g. 90s).
+  echo "== Lambda function URL: crave-ad-generate =="
+  cat >"$GEN/ad-generate-fnurl-cors.json" <<'FNURLCORS'
+{
+  "AllowCredentials": false,
+  "AllowHeaders": ["authorization", "content-type"],
+  "AllowMethods": ["*"],
+  "AllowOrigins": ["*"],
+  "MaxAge": 86400
+}
+FNURLCORS
+  if aws lambda get-function-url-config --function-name crave-ad-generate --region "$AWS_REGION" &>/dev/null; then
+    aws lambda update-function-url-config \
+      --function-name crave-ad-generate \
+      --region "$AWS_REGION" \
+      --cors "file://${GEN}/ad-generate-fnurl-cors.json"
+  else
+    aws lambda create-function-url-config \
+      --function-name crave-ad-generate \
+      --region "$AWS_REGION" \
+      --auth-type NONE \
+      --cors "file://${GEN}/ad-generate-fnurl-cors.json"
+  fi
+  aws lambda get-function-url-config --function-name crave-ad-generate --region "$AWS_REGION" --query FunctionUrl --output text \
+    >"$GEN/ad-generate-function-url.txt"
+  echo "Wrote $GEN/ad-generate-function-url.txt"
+  # Since Oct 2025, public function URLs need both InvokeFunctionUrl and InvokeFunction (via URL only).
+  aws lambda remove-permission --function-name crave-ad-generate --region "$AWS_REGION" --statement-id AllowFnUrlPublicInvoke 2>/dev/null || true
+  aws lambda remove-permission --function-name crave-ad-generate --region "$AWS_REGION" --statement-id AllowFnUrlInvokeFunction 2>/dev/null || true
+  aws lambda add-permission \
+    --function-name crave-ad-generate \
+    --region "$AWS_REGION" \
+    --statement-id AllowFnUrlPublicInvoke \
+    --action lambda:InvokeFunctionUrl \
+    --principal '*' \
+    --function-url-auth-type NONE
+  aws lambda add-permission \
+    --function-name crave-ad-generate \
+    --region "$AWS_REGION" \
+    --statement-id AllowFnUrlInvokeFunction \
+    --action lambda:InvokeFunction \
+    --principal '*' \
+    --invoked-via-function-url
 else
   echo "== skip Lambdas =="
 fi
@@ -261,6 +353,13 @@ if [[ "$SKIP_API" -eq 0 ]] && [[ -n "$PROXY_FN_ARN" && "$PROXY_FN_ARN" != "None"
     echo "Created API_ID=$API_ID"
   else
     echo "Using existing API_ID=$API_ID"
+  fi
+
+  # Routes are not callable until an HTTP API stage exists (otherwise invoke URL returns 404).
+  STAGE_COUNT="$(aws apigatewayv2 get-stages --api-id "$API_ID" --query 'length(Items)' --output text 2>/dev/null || echo 0)"
+  if [[ "${STAGE_COUNT:-0}" == "0" || "${STAGE_COUNT}" == "None" ]]; then
+    echo "Creating HTTP API \$default stage (auto-deploy)…"
+    aws apigatewayv2 create-stage --api-id "$API_ID" --stage-name '$default' --auto-deploy
   fi
 
   find_integration_id() {
