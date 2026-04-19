@@ -8,6 +8,7 @@ type ChatSearchBarProps = {
   name?: string;
   defaultValue?: string;
   autoFocus?: boolean;
+  disabled?: boolean;
   form?: string;
   id?: string;
   className?: string;
@@ -17,6 +18,7 @@ export function ChatSearchBar({
   name = "q",
   defaultValue,
   autoFocus,
+  disabled,
   form,
   id = "crave-chat-search",
   className,
@@ -37,6 +39,7 @@ export function ChatSearchBar({
         form={form}
         defaultValue={defaultValue}
         autoFocus={autoFocus}
+        disabled={disabled}
         placeholder="Ask Crave anything about your restaurant..."
         className="h-10 min-w-0 w-full flex-1 border-0 bg-transparent px-0 text-base text-dark shadow-none placeholder:text-gray focus-visible:ring-0 md:text-base"
       />

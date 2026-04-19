@@ -5,9 +5,15 @@ import { cn } from "@/lib/utils";
 import { CraveInChatView } from "@/components/crave-assistant/crave-in-chat-view";
 import { CravePreChatView } from "@/components/crave-assistant/crave-prechat-view";
 
-export function AskCraveExperience() {
-  const [inChat, setInChat] = useState(false);
-  const [firstMessage, setFirstMessage] = useState("");
+type AskCraveExperienceProps = {
+  /** When set (e.g. `/dashboard/ask?q=...` from the home dashboard), skip pre-chat and open the thread. */
+  initialPrompt?: string;
+};
+
+export function AskCraveExperience({ initialPrompt = "" }: AskCraveExperienceProps) {
+  const seed = initialPrompt.trim();
+  const [inChat, setInChat] = useState(() => Boolean(seed));
+  const [firstMessage, setFirstMessage] = useState(() => seed);
   const [revealChat, setRevealChat] = useState(false);
 
   useEffect(() => {
