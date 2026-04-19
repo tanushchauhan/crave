@@ -162,11 +162,33 @@ write_bedrock_proxy_env() {
   python3 <<'PY'
 import json, os, pathlib
 gen = pathlib.Path(os.environ["GEN"])
+base = (os.environ.get("SUPABASE_URL") or "").strip().rstrip("/")
+
+def edge_fn(name):
+    return f"{base}/functions/v1/{name}" if base else ""
+
 v = {}
-for k in ("PLACE_ORDER_URL", "SUPABASE_ANON_KEY", "BEDROCK_TEXT_MODEL_ID"):
-    if os.environ.get(k):
-        v[k] = os.environ[k]
-if not v.get("PLACE_ORDER_URL") or not v.get("SUPABASE_ANON_KEY"):
+anon = (os.environ.get("SUPABASE_ANON_KEY") or "").strip()
+if anon:
+    v["SUPABASE_ANON_KEY"] = anon
+mid = (os.environ.get("BEDROCK_TEXT_MODEL_ID") or "").strip()
+if mid:
+    v["BEDROCK_TEXT_MODEL_ID"] = mid
+el = (os.environ.get("ELEVENLABS_CUSTOM_LLM_SECRET") or "").strip()
+if el:
+    v["ELEVENLABS_CUSTOM_LLM_SECRET"] = el
+
+for env_key, fn_name in (
+    ("PLACE_ORDER_URL", "place-order"),
+    ("RESOLVE_GROUP_URL", "resolve-group"),
+    ("RECOMMEND_URL", "recommend"),
+    ("CONFIRM_BOOKING_URL", "confirm-booking"),
+):
+    explicit = (os.environ.get(env_key) or "").strip()
+    v[env_key] = explicit or edge_fn(fn_name)
+
+v = {k: val for k, val in v.items() if val}
+if not v.get("SUPABASE_ANON_KEY"):
     v.setdefault("CRAVE_PROXY_READY", "1")
 (gen / "lambda-env-bedrock-proxy.json").write_text(json.dumps({"Variables": v}, indent=2))
 PY
@@ -398,6 +420,10 @@ print(next((r['RouteId'] for r in d.get('Items',[]) if r.get('RouteKey')==k), ''
   }
 
   upsert_route "POST /voice/place-order"
+  upsert_route "POST /voice/resolve-group"
+  upsert_route "POST /voice/recommend"
+  upsert_route "POST /voice/confirm-booking"
+  upsert_route "POST /v1/chat/completions"
   upsert_route "POST /bedrock/converse"
 
   AD_FN_ARN="$(aws lambda get-function --function-name crave-ad-generate --query 'Configuration.FunctionArn' --output text 2>/dev/null || true)"

@@ -343,9 +343,9 @@ aws lambda update-function-code --function-name crave-receipt-ocr --zip-file fil
 
 **Behavior:**
 
-1. **Shared gate:** validate Supabase **JWT** (JWKS from `${SUPABASE_URL}/auth/v1/.well-known/jwks.json`) or HMAC from a trusted Edge relay; reject anonymous abuse.
-2. **Bedrock paths:** `POST /bedrock/converse` (or similar) forwards **constrained** payloads to Bedrock for reasoning / multimodal calls; strip provider keys from any response envelope.
-3. **Data paths (no Bedrock):** routes such as `POST /voice/place-order` forward to Supabase Edge **`place-order`** with the same user JWT (or a short-lived signed intent). Persisted rows (`orders`, `order_items`) live only in Postgres ([docs/supabase.md](supabase.md) section 6.4); **Live Bookings and Orders** (Realtime on **`orders`**, alongside **`bookings`**) is not another Lambda.
+1. **Shared gate (voice + native Bedrock):** validate Supabase **JWT** (JWKS from `${SUPABASE_URL}/auth/v1/.well-known/jwks.json`) or HMAC from a trusted Edge relay; reject anonymous abuse. *(The current Lambda checks presence of `Authorization` for `/bedrock/converse` and `/voice/*`; tighten to JWKS when time allows.)*
+2. **Bedrock paths:** `POST /bedrock/converse` forwards **Bedrock-native** `messages` to **Converse**. **`POST /v1/chat/completions`** is an **OpenAI Chat Completions**-shaped shim for **ElevenLabs Custom LLM**: same Converse model as `BEDROCK_TEXT_MODEL_ID`, but auth is **`Authorization: Bearer <ELEVENLABS_CUSTOM_LLM_SECRET>`** (use the same value as the Custom LLM API key in ElevenLabs). The request `model` field is echoed in the response; **`stream: true`** and OpenAI **`tools`** are not supported in the shim (use **client tools** in the app for CRAVE tools).
+3. **Data paths (no Bedrock):** routes under `POST /voice/*` (e.g. **`place-order`**, **`resolve-group`**, **`recommend`**, **`confirm-booking`**) forward to Supabase Edge with the same user JWT. Persisted rows for orders live in Postgres ([docs/supabase.md](supabase.md) section 6.4); partner **`bookings`** use Edge **`confirm-booking`** so the agent never needs the service role on device.
 
 Keep **one** Lambda codebase with internal modules per route to stay within hackathon deploy complexity.
 
@@ -426,9 +426,12 @@ echo "$API_ID"
 | Method | Route | Integration target |
 |--------|-------|----------------------|
 | POST | `/receipts/signed-url` | Lambda: returns presigned PUT URL for mobile upload |
+| POST | `/v1/chat/completions` | `bedrock-proxy`: OpenAI-compatible body → Bedrock **Converse** (ElevenLabs Custom LLM); Bearer **`ELEVENLABS_CUSTOM_LLM_SECRET`** |
 | POST | `/bedrock/converse` | `bedrock-proxy` (Claude / Nova / etc.) |
-| POST | `/voice/place-order` | Same Lambda (or sibling): validates JWT → forwards body to Supabase Edge `place-order` — writes **`orders` / `order_items`** ([docs/plan.md](plan.md) section 2 feature 5, [docs/supabase.md](supabase.md) section 11) |
-| POST | `/voice/resolve-group` | Optional separate route or unified `POST /voice/tool` dispatcher if you prefer one integration |
+| POST | `/voice/place-order` | `bedrock-proxy`: forwards body + JWT to Edge **`place-order`** — **`orders` / `order_items`** ([docs/plan.md](plan.md) section 2 feature 5, [docs/supabase.md](supabase.md) section 11) |
+| POST | `/voice/resolve-group` | `bedrock-proxy` → Edge **`resolve-group`** (group resolution for the voice agent) |
+| POST | `/voice/recommend` | `bedrock-proxy` → Edge **`recommend`** |
+| POST | `/voice/confirm-booking` | `bedrock-proxy` → Edge **`confirm-booking`** (partner **`bookings`** row, `source=partner_app`) |
 | POST | `/ads/generate` | `ad-generate` |
 
 Create Lambda integrations (repeat per function):
@@ -518,6 +521,8 @@ The model must return **only** JSON matching [docs/supabase.md](supabase.md) sec
 
 Ad and Remotion workflows use **ElevenLabs** for **TTS**, not Amazon Polly. There is no `aws elevenlabs` CLI — implement in Lambda with HTTPS (`fetch` / axios) to the [ElevenLabs API](https://elevenlabs.io/docs), store `ELEVENLABS_API_KEY` in **AWS Secrets Manager** or Lambda environment (encrypted). Keep keys off mobile; only Lambda (or a trusted CI job) calls ElevenLabs for batch narration.
 
+**Conversational agent (mobile):** Prefer **ElevenLabs Conversational AI** with the device (or their SDK) maintaining the **low-latency audio stream to ElevenLabs**, while **tool calls** from that agent hit **`bedrock-proxy` → Supabase Edge** (this repo). Do **not** tunnel full-duplex conversation audio through Lambda: API Gateway and Lambda payload/time limits are a poor fit for streaming PCM, and you add an extra network hop and cost. If you must avoid any ElevenLabs client secret in the app, mint a **short-lived agent / conversation token** from Lambda (or Supabase Edge) and still let audio flow **client ↔ ElevenLabs**, not client ↔ Lambda ↔ ElevenLabs for every utterance.
+
 ---
 
 ## 12. Observability and cost
@@ -538,7 +543,7 @@ Ad and Remotion workflows use **ElevenLabs** for **TTS**, not Amazon Polly. Ther
 - [ ] Lambda: `aws lambda invoke --function-name crave-receipt-ocr --payload file://test-s3-event.json out.json` (local test with sample S3 event).
 - [ ] S3 → Lambda: upload `receipts/test-user/test-booking.jpg` and confirm CloudWatch logs + Supabase `receipt_captures.ocr_raw` populated.
 - [ ] API Gateway: `curl` POST to `/ads/generate` returns URL field.
-- [ ] Voice path: authenticated `curl` POST to `/voice/place-order` (or `/voice/tool`) returns success and a row appears in Supabase **`orders`** (verify in SQL editor or MCP `execute_sql`).
+- [ ] Voice paths: authenticated `curl` POST to `/voice/place-order`, `/voice/resolve-group`, `/voice/recommend`, `/voice/confirm-booking` return expected JSON; **`place-order`** / **`confirm-booking`** create rows in **`orders`** / **`bookings`** (verify in SQL editor or MCP `execute_sql`).
 - [ ] CloudFront: `curl -I https://dxxxx.cloudfront.net/...` returns `200` for public asset behavior (or signed URL works).
 
 ---
