@@ -21,8 +21,21 @@ for (const name of [...envNames].reverse()) {
 // Expose Supabase URL/anon from root .env: Metro only inlines EXPO_PUBLIC_*; many monorepos
 // only set SUPABASE_URL + SUPABASE_ANON_KEY, so we pass them through `extra` for lib/supabase.ts.
 const { expo } = require("./app.json");
+
+const LOCATION_WHEN_IN_USE =
+    "Crave uses your location to show restaurants near you on the recommendations tab.";
+
 module.exports = {
     ...expo,
+    ios: {
+        ...(expo.ios ?? {}),
+        infoPlist: {
+            ...(expo.ios?.infoPlist ?? {}),
+            NSLocationWhenInUseUsageDescription:
+                expo.ios?.infoPlist?.NSLocationWhenInUseUsageDescription ??
+                LOCATION_WHEN_IN_USE,
+        },
+    },
     extra: {
         ...(expo.extra ?? {}),
         supabaseUrl:
