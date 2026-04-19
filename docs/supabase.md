@@ -14,7 +14,7 @@ This document is written **for implementing agents** (human or automated). It tu
 2. **Personal Access Token (PAT)** for Supabase is available to the MCP client (Cursor: Settings → MCP). Never commit the PAT.
 3. **Execute in this order:**
    - Enable extensions → core tables → indexes → RLS policies → helper functions/triggers → Realtime publication → Edge Functions → seed data. (**Object files live in S3**, not Supabase Storage — see [§7](#7-object-storage-s3-only).)
-4. **Application repos** (`apps/mobile`, `apps/dashboard`) consume only the **anon** key + **project URL** on the client. **Service role** is server-only (Edge Functions, AWS Lambda, CI seed jobs).
+4. **Application clients** (Expo mobile, **Next.js B2B app [crave-b2b](../crave-b2b/)**) consume only the **anon** key + **project URL** on the client. **Service role** is server-only (Edge Functions, AWS Lambda, CI seed jobs).
 
 ---
 
@@ -28,7 +28,8 @@ Map each Supabase primitive to a **load-bearing** CRAVE feature so judges and do
 | **pgvector + HNSW** | Vectors produced by **Amazon Bedrock** (Titan Text G1 @ 1536 for text columns; Titan Multimodal G1 @ 1024 for image columns per [plan.md section 3.2](plan.md#32-ai-model-stack)); group recommendation and receipt line ↔ menu matching stage 3 ([plan.md section 3.3](plan.md#33-bill-splitting--post-meal-feedback-loop-how-it-feeds-the-pipeline)). |
 | **pg_trgm** | Receipt line ↔ menu fuzzy match stage 2 ([plan.md section 3.3](plan.md#33-bill-splitting--post-meal-feedback-loop-how-it-feeds-the-pipeline)). |
 | **PostGIS** | “Within radius” restaurant filter; store `location_geog` as `geography(Point,4326)` ([plan.md section 3.5 step 4](plan.md#35-how-a-recommendation-is-actually-produced-simplified-for-24-hours)). |
-| **Auth (phone OTP)** | Consumer onboarding; enables SMS-adjacent flows ([plan.md section 2](plan.md#2-what-were-building)). |
+| **Auth (phone OTP)** | **Consumer** (Expo): phone-number onboarding; enables SMS-adjacent flows ([plan.md section 2](plan.md#2-what-were-building)). |
+| **Auth (email/password)** | **B2B** ([crave-b2b](../crave-b2b/)): restaurant operators use email + password; signup collects **restaurant name** and, after session exists, calls RPC **`register_restaurant_on_signup`** to set **`restaurants.owner_user_id`** (claim by `lower(trim(name))` match or insert new row). See [§6.9](#69-b2b-ownership-no-separate-staff-table) and [§10](#10-auth). |
 | **Realtime** | **Live Bookings and Orders** on the B2B dashboard ([plan.md section 4.1](plan.md#41-dashboard-pages-what-ships-for-the-demo) item 2): partner **`bookings`** ([plan.md section 4.3](plan.md#43-partner-booking-flow--how-bookings-reach-the-dashboard)) and partner **`orders`** both publish to Realtime; optional group vote sync if implemented ([plan.md section 5.1 table](plan.md#51-supabase--what-we-use-it-for-best-use-of-supabase-track)). |
 | **Storage (Supabase)** | **Not used** for CRAVE binaries in this hackathon — receipts, menu images, and ad creative all go to **Amazon S3** ([docs/aws.md](aws.md)); Postgres stores URLs only ([§7](#7-object-storage-s3-only)). |
 | **Edge Functions (Deno)** | Deployed names: **`resolve-group`**, **`recommend`**, **`place-order`**, **`confirm-booking`**, **`match-receipt-items`**, optional **`generate-ad`** — map to voice tools `resolve_group`, `recommend_restaurants`, `confirm_booking`, `place_order` ([plan.md section 8](plan.md#8-24-hour-build-timeline)). |
@@ -180,6 +181,7 @@ Suggested sequence (migration names are examples):
 | 10 | `20260418000010_chatbot_rpcs.sql` | `assert_restaurant_owner` + B2B read RPCs (`get_booking_summary`, etc.). |
 | 11 | `20260418000011_orders_and_lines.sql` | `orders`, `order_items`, order RLS, **`ALTER PUBLICATION … ADD TABLE public.orders`** for the **orders** half of Live Bookings and Orders. |
 | 12 | `20260418000012_rename_pref_update_swipe_to_onboarding.sql` | No-op on fresh installs; renames enum label `swipe` → `onboarding` if an older DB still has `swipe`. |
+| 13 | `20260419150000_register_restaurant_on_signup.sql` | **`register_restaurant_on_signup(p_restaurant_name text)`** — `SECURITY DEFINER` RPC for B2B signup: insert or claim **`restaurants`** row for **`auth.uid()`** (RLS does not allow raw client insert/claim). `GRANT EXECUTE` to **`authenticated`**. |
 
 ### 5.1 PostGIS availability
 
@@ -515,7 +517,15 @@ create table public.ad_assets (
 
 ### 6.9 B2B ownership (no separate staff table)
 
-Restaurant-scoped dashboard access uses **`restaurants.owner_user_id`** → `auth.users.id` for the partner account. **There is no `restaurant_staff` join table** — it added migration overhead without benefit at hackathon scope (one owner per venue is enough). Set `owner_user_id` from **seed SQL** or a **service-role** Edge/admin step when a partner claims a restaurant; client RLS then gates analytics, ads, bookings, and orders to `exists (select 1 from restaurants r where r.id = … and r.owner_user_id = auth.uid())`.
+Restaurant-scoped dashboard access uses **`restaurants.owner_user_id`** → `auth.users.id` for the partner account. **There is no `restaurant_staff` join table** — it added migration overhead without benefit at hackathon scope (one owner per venue is enough).
+
+**How `owner_user_id` gets set today**
+
+1. **Seed / demo:** **seed SQL** can attach a known `auth` user to a curated partner row (see [§13](#13-seeds-and-demo-data)).
+2. **B2B self-serve (crave-b2b):** After **`auth.signUp`** / **`signInWithPassword`**, the dashboard calls **`public.register_restaurant_on_signup(p_restaurant_name text)`** (migration **`20260419150000_register_restaurant_on_signup.sql`**). The function runs as **`SECURITY DEFINER`** so it can **`INSERT`** a new **`restaurants`** row or **`UPDATE owner_user_id`** when no conflicting owner exists (case-insensitive match on **`lower(trim(name))`**; errors: **`restaurant_already_claimed`**, **`ambiguous_restaurant_name`**). Client RLS does not allow unprivileged inserts on **`restaurants`**, so this RPC is required for the signup flow.
+3. **Legacy option:** a **service-role** Edge or admin step can still set **`owner_user_id`** when a partner is onboarded outside the app.
+
+Client RLS gates analytics, ads, bookings, and orders to `exists (select 1 from restaurants r where r.id = … and r.owner_user_id = auth.uid())`.
 
 ---
 
@@ -698,15 +708,27 @@ supabase.channel(`orders:${restaurantId}`)
 
 ---
 
-## 10. Auth (phone OTP)
+## 10. Auth
 
-Dashboard steps (often **not** exposed to MCP — document for humans):
+### 10.1 Consumer (Expo) — phone OTP
+
+Supabase dashboard steps (often **not** exposed to MCP — document for humans):
 
 1. Authentication → Providers → **Phone** enabled.
 2. Configure SMS provider (Twilio/MessageBird) per Supabase docs.
-3. Set **redirect URLs** for Expo deep link and Next.js localhost / Vercel deployment URLs.
+3. Set **redirect URLs** for the Expo deep link scheme (see [supabase/config.toml](../supabase/config.toml)). For **B2B** email magic links and OAuth-style callbacks, add the URLs documented in [§10.2](#102-b2b-crave-b2b--email--password) (`/auth/callback` on localhost and production).
 
 **SMS group invites** ([plan.md section 2](plan.md#2-what-were-building)): optional table `pending_phone_invites (id, inviter_user_id, phone_e164, group_id, token, created_at)` with RLS; sending SMS may be external (Twilio) or deferred to in-app share sheet for hackathon scope.
+
+### 10.2 B2B (crave-b2b) — email / password
+
+The **[crave-b2b](../crave-b2b/)** Next.js app uses **Supabase Auth** with **Email** provider (sign up / sign in / password reset). It is separate from the consumer **phone OTP** story above.
+
+1. Authentication → Providers → **Email** enabled (default on most projects).
+2. **Redirect URLs:** add **`http://localhost:3000/auth/callback`** and production **`https://<vercel-host>/auth/callback`** so email confirmation and recovery links return to [crave-b2b/app/auth/callback/route.ts](../crave-b2b/app/auth/callback/route.ts) (PKCE **`exchangeCodeForSession`**).
+3. **Signup flow:** the client sends **`auth.signUp`** with **`options.data.pending_restaurant_name`** (stored in **`auth.users.raw_user_meta_data`**). If a **session** is returned immediately (email confirmation off), the app calls **`supabase.rpc('register_restaurant_on_signup', { p_restaurant_name })`**. If confirmation is required, the **callback** route reads **`user.user_metadata.pending_restaurant_name`** after exchange and runs the same RPC once.
+
+Env wiring for monorepo root **`.env`**: see [docs/client-env.md](client-env.md) (`SUPABASE_*` ↔ **`NEXT_PUBLIC_*`** in **crave-b2b** `next.config.ts`).
 
 ---
 
@@ -715,7 +737,7 @@ Dashboard steps (often **not** exposed to MCP — document for humans):
 | Function | Transport | Auth | Responsibility |
 |----------|-----------|------|------------------|
 | `resolve-group` | HTTPS POST | User JWT | Resolve nickname → member ids + embeddings ([plan.md section 3.5](plan.md#35-how-a-recommendation-is-actually-produced-simplified-for-24-hours)). Maps to voice tool `resolve_group`. |
-| `recommend` | HTTPS POST | User JWT | Filters + pgvector query + optional call to Bedrock re-rank via Lambda. Maps to `recommend_restaurants`. |
+| `recommend` | HTTPS POST | **`Authorization: Bearer <access_token>`** (gateway **`verify_jwt = false`** in [supabase/config.toml](../supabase/config.toml) because ES256 session JWTs can be rejected as `UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM` at the edge; the function calls **`getUser()`** then RPC) | JSON body: **`limit`** (1–50, default 12); optional **`lat`**, **`lng`** (WGS84), **`radius_m`** (meters; Edge clamps **500–50_000**, default **5000** when coords are sent). RPC **`recommend_restaurants_for_user`** ranks by cosine (`restaurants.embedding` vs `users.pref_embedding` when set; else partner / `created_at`). When **`lat`/`lng`** are present, Postgres filters with **`ST_DWithin`** on **`restaurants.location_geog`**; if that returns **no rows**, the RPC falls back to the same ranking **without** geo so the list stays non-empty. Attaches **`menu_items`** per venue. Optional Bedrock re-rank via Lambda remains future work ([docs/aws.md](aws.md)). Maps to `recommend_restaurants`. |
 | `place-order` | HTTPS POST | User JWT | Validates partner + menu availability, inserts **`orders` + `order_items`**, returns order id for confirmation UI; triggers Realtime on **`orders`** for Live Bookings and Orders ([plan.md section 2](plan.md#2-what-were-building) feature 5, [plan.md section 8](plan.md#8-24-hour-build-timeline) voice tools). |
 | `confirm-booking` | HTTPS POST | User JWT | Validates **`is_crave_partner`**, inserts **`bookings`** with `source='partner_app'`, `status='confirmed'` for in-app / voice booking ([plan.md section 4.3](plan.md#43-partner-booking-flow--how-bookings-reach-the-dashboard)); map to voice tool `confirm_booking`. |
 | `match-receipt-items` | HTTPS POST (invoked by Lambda after OCR) | **`x-crave-internal-secret: <CRAVE_INTERNAL_SECRET>`** (same value as Lambda `INTERNAL_HMAC_SECRET`); **`verify_jwt = false`** in [supabase/config.toml](../supabase/config.toml) | Runs RPC **`match_receipt_lines_exact_and_trigram`** (exact + trigram on `menu_items`) then optional stage 3: calls **`POST {CRAVE_AWS_API_BASE}/internal/embeddings/text`** with the same secret, then RPC **`match_receipt_line_embedding`** (pgvector cosine on `menu_items.embedding`). **Hosted secrets:** `CRAVE_INTERNAL_SECRET`, `CRAVE_SERVICE_ROLE_KEY`, `SUPABASE_URL`, **`CRAVE_AWS_API_BASE`** (API Gateway origin only, no path). |
@@ -728,6 +750,8 @@ Dashboard steps (often **not** exposed to MCP — document for humans):
 **Idempotency:** `match-receipt-items` accepts `receipt_id` + optional `s3_etag`; if the capture’s `s3_etag` matches and line rows already exist, returns **`skipped: true`** (no duplicate Bedrock embedding work).
 
 **Client integration env:** see [docs/client-env.md](client-env.md). Deploy Edge + DB with [scripts/supabase-deploy.sh](../scripts/supabase-deploy.sh).
+
+**Postgres (recommendations):** migration `20260419180000_recommend_restaurants_for_user.sql` introduced the RPC; migration **`20260420120000_recommend_restaurants_geo.sql`** replaces the signature with **`public.recommend_restaurants_for_user(p_limit integer default 12, p_lat double precision default null, p_lng double precision default null, p_radius_m double precision default null)`** (`SECURITY INVOKER`). **`authenticated`** may `EXECUTE` the function. Radius is clamped in SQL to **500–50_000** m; **`p_radius_m` null** uses **5000** m when geo is active. Migration **`20260421153000_recommend_restaurants_for_user_schema_cache.sql`** re-applies the same definition (drops any stale overloads) and runs **`NOTIFY pgrst, 'reload schema'`** so PostgREST picks up the function after `db push`. If **`db push`** errors with *Remote migration versions not found in local*, add or repair the missing version (repo includes **`20260419094631_remote_history_align.sql`** as a no-op placeholder when the version exists only on the host).
 
 ---
 
@@ -771,6 +795,7 @@ Shipped as a **Node script** under `tools/supabase-seed/` (see [tools/supabase-s
 - [ ] RLS: user B cannot `select` user A’s `receipt_captures`.
 - [ ] `get_advisors`: resolve **ERROR** level security issues; accept **WARN** only if documented.
 - [ ] Edge: `get_logs` for `edge_functions` clean on cold start.
+- [ ] `recommend` Edge + RPC `recommend_restaurants_for_user`: signed-in user gets non-empty `recommendations` after [tools/supabase-seed](../tools/supabase-seed) (or manual rows with `restaurants.embedding`).
 
 ---
 
