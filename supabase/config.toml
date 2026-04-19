@@ -42,3 +42,6 @@ verify_jwt = false
 
 [functions.resolve-group]
 verify_jwt = false
+
+[functions.confirm-booking]
+verify_jwt = false

@@ -7,10 +7,23 @@ import RipplePressable from "@/components/RipplePressable";
 import VoiceAssistantFab from "@/components/VoiceAssistantFab";
 import { useGroupsSession } from "@/context/GroupsSessionContext";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
-import { pickReceiptDocument } from "@/lib/pickReceipt";
-import { Pencil, Search, Settings } from "lucide-react-native";
-import { useCallback, useMemo, useState } from "react";
 import {
+    type BookingListRow,
+    bookingSearchText,
+    createBookingViaEdge,
+    fetchMyBookings,
+    fetchPartnerRestaurants,
+    formatBookingDateLabel,
+    type PartnerRestaurantOption,
+    updateDietaryNotes,
+} from "@/lib/bookingsApi";
+import { pickReceiptDocument } from "@/lib/pickReceipt";
+import { supabase } from "@/lib/supabase";
+import { Pencil, Search, Settings } from "lucide-react-native";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+    ActivityIndicator,
+    Alert,
     Image,
     Modal,
     Pressable,
@@ -40,13 +53,6 @@ type ReceiptAttachment = {
     mimeType?: string | null;
 };
 
-type ReservationRow = {
-    id: string;
-    venue: string;
-    extraMembers: string;
-    reservationAt: Date;
-};
-
 type ResSortKey = "latest" | "oldest" | "venue-asc" | "venue-desc";
 
 const RES_SORT_LABELS: Record<ResSortKey, string> = {
@@ -56,45 +62,21 @@ const RES_SORT_LABELS: Record<ResSortKey, string> = {
     "venue-desc": "Venue (Z–A)",
 };
 
-type ResFilterId = "all" | "upcoming" | "past";
+type ResFilterId = "all" | "upcoming" | "past" | "current-group";
 
 const RES_FILTER_LABELS: Record<ResFilterId, string> = {
     all: "All",
     upcoming: "Upcoming",
     past: "Past",
+    "current-group": "Current group only",
 };
 
-/** Mock reservations — replace with API data. */
-const MOCK_RESERVATIONS: ReservationRow[] = [
-    {
-        id: "r1",
-        venue: "Capital Day Grill",
-        extraMembers: "+ 3...",
-        // Past (before “now” in normal use — fixed date in the past)
-        reservationAt: new Date(2024, 3, 16, 19, 30, 0),
-    },
-    {
-        id: "r2",
-        venue: "Capital Day Grill",
-        extraMembers: "+ 3...",
-        reservationAt: new Date(2026, 5, 18, 19, 30, 0),
-    },
-];
-
-function formatReservationLabel(d: Date): string {
-    const dd = String(d.getDate()).padStart(2, "0");
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const yy = String(d.getFullYear()).slice(-2);
-    let hours = d.getHours();
-    const minutes = String(d.getMinutes()).padStart(2, "0");
-    const ampm = hours >= 12 ? "PM" : "AM";
-    hours = hours % 12;
-    if (hours === 0) hours = 12;
-    return `${dd}/${mm}/${yy} ${String(hours).padStart(2, "0")}:${minutes} ${ampm}`;
+function bookingDate(b: BookingListRow): Date {
+    return new Date(b.scheduled_at ?? b.created_at);
 }
 
-function isReservationPast(at: Date): boolean {
-    return at.getTime() < Date.now();
+function isBookingPast(b: BookingListRow): boolean {
+    return bookingDate(b).getTime() < Date.now();
 }
 
 export default function ReservationsPage({
@@ -111,45 +93,86 @@ export default function ReservationsPage({
     const [filterId, setFilterId] = useState<ResFilterId>("all");
     const [sortMenuOpen, setSortMenuOpen] = useState(false);
     const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+    const [bookings, setBookings] = useState<BookingListRow[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+    const [newBookingOpen, setNewBookingOpen] = useState(false);
+
+    const loadBookings = useCallback(async () => {
+        setError(null);
+        setLoading(true);
+        try {
+            const { data: userData } = await supabase.auth.getUser();
+            setCurrentUserId(userData.user?.id ?? null);
+            const rows = await fetchMyBookings();
+            setBookings(rows);
+        } catch (e: unknown) {
+            setError(e instanceof Error ? e.message : "Failed to load");
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        void loadBookings();
+    }, [loadBookings]);
 
     const currentLabel = currentGroup?.name ?? "No group";
 
-    const toggleExpand = useCallback((id: string) => {
-        setExpandedId((cur) => (cur === id ? null : id));
-    }, []);
-
     const filtered = useMemo(() => {
-        let list = MOCK_RESERVATIONS.filter((r) =>
-            r.venue.toLowerCase().includes(search.trim().toLowerCase()),
-        );
+        const q = search.trim().toLowerCase();
+        let list = bookings;
+        if (q) {
+            list = list.filter((b) => bookingSearchText(b).includes(q));
+        }
         if (filterId === "upcoming") {
-            list = list.filter((r) => !isReservationPast(r.reservationAt));
+            list = list.filter((b) => !isBookingPast(b));
         } else if (filterId === "past") {
-            list = list.filter((r) => isReservationPast(r.reservationAt));
+            list = list.filter((b) => isBookingPast(b));
+        } else if (filterId === "current-group") {
+            if (currentGroup?.id) {
+                list = list.filter((b) => b.group_id === currentGroup.id);
+            } else {
+                list = [];
+            }
         }
         return list;
-    }, [search, filterId]);
+    }, [bookings, search, filterId, currentGroup?.id]);
 
-    const visibleReservations = useMemo(() => {
+    const visibleBookings = useMemo(() => {
         const list = [...filtered];
         if (sortKey === "latest") {
             return list.sort(
-                (a, b) => b.reservationAt.getTime() - a.reservationAt.getTime(),
+                (a, b) => bookingDate(b).getTime() - bookingDate(a).getTime(),
             );
         }
         if (sortKey === "oldest") {
             return list.sort(
-                (a, b) => a.reservationAt.getTime() - b.reservationAt.getTime(),
+                (a, b) => bookingDate(a).getTime() - bookingDate(b).getTime(),
             );
         }
+        const venueOf = (b: BookingListRow) => b.restaurants?.name ?? "Restaurant";
         if (sortKey === "venue-asc") {
-            return list.sort((a, b) => a.venue.localeCompare(b.venue));
+            return list.sort((a, b) => venueOf(a).localeCompare(venueOf(b)));
         }
         if (sortKey === "venue-desc") {
-            return list.sort((a, b) => b.venue.localeCompare(a.venue));
+            return list.sort((a, b) => venueOf(b).localeCompare(venueOf(a)));
         }
         return list;
     }, [filtered, sortKey]);
+
+    useEffect(() => {
+        setExpandedId((cur) =>
+            cur && visibleBookings.some((b) => b.id === cur)
+                ? cur
+                : (visibleBookings[0]?.id ?? null),
+        );
+    }, [visibleBookings]);
+
+    const toggle = useCallback((id: string) => {
+        setExpandedId((cur) => (cur === id ? null : id));
+    }, []);
 
     const filterLabel = RES_FILTER_LABELS[filterId];
 
@@ -182,7 +205,7 @@ export default function ReservationsPage({
                     <TextInput
                         value={search}
                         onChangeText={setSearch}
-                        placeholder="Search for a group..."
+                        placeholder="Search venue or date…"
                         placeholderTextColor={MUTED}
                         className="flex-1 py-0 font-josefin text-[13px] text-[#2c2c2c]"
                     />
@@ -191,6 +214,7 @@ export default function ReservationsPage({
                 <TouchableOpacity
                     activeOpacity={0.88}
                     className="mt-3 self-start rounded-xl bg-[#d9d9d9] px-4 py-2.5"
+                    onPress={() => setNewBookingOpen(true)}
                 >
                     <Text className="font-josefin-bold text-[11px] text-white">
                         Manage Reservations
@@ -224,31 +248,77 @@ export default function ReservationsPage({
                     </TouchableOpacity>
                 </View>
 
-                <View className="mt-5 gap-4">
-                    {visibleReservations.length === 0 ? (
-                        <Text className="text-center font-josefin text-[13px] text-[#888]">
-                            No reservations match your search or filters.
+                {loading ? (
+                    <View className="mt-10 items-center py-8">
+                        <ActivityIndicator size="large" color={ORANGE_CTA} />
+                        <Text className="mt-3 font-josefin text-[14px] text-[#888]">
+                            Loading reservations…
                         </Text>
-                    ) : (
-                        visibleReservations.map((row) => {
-                            const label = formatReservationLabel(row.reservationAt);
-                            const past = isReservationPast(row.reservationAt);
+                    </View>
+                ) : error ? (
+                    <View className="mt-4 rounded-2xl bg-[#fff3e8] px-4 py-4">
+                        <Text className="font-josefin-bold text-[15px] text-[#c45a00]">
+                            Could not load reservations
+                        </Text>
+                        <Text className="mt-2 font-josefin text-[13px] text-[#666]">
+                            {error}
+                        </Text>
+                        <TouchableOpacity
+                            className="mt-3 self-start rounded-full bg-[#f5861f] px-4 py-2"
+                            onPress={() => void loadBookings()}
+                        >
+                            <Text className="font-josefin-bold text-[14px] text-white">
+                                Retry
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
+                ) : visibleBookings.length === 0 ? (
+                    <View className="mt-6">
+                        <Text className="font-josefin text-[14px] text-[#666]">
+                            {bookings.length === 0
+                                ? "No reservations yet. Use Manage Reservations to book a partner venue, or run the seed script for demo rows."
+                                : "No reservations match your search or filters."}
+                        </Text>
+                    </View>
+                ) : (
+                    <View className="mt-5 gap-4">
+                        {visibleBookings.map((b) => {
+                            const venue = b.restaurants?.name ?? "Restaurant";
+                            const dateLabel = formatBookingDateLabel(
+                                b.scheduled_at,
+                                b.created_at,
+                            );
+                            const extra = `Party of ${b.party_size}`;
+                            const isBooker =
+                                currentUserId != null &&
+                                b.user_id === currentUserId;
                             return (
                                 <ReservationCard
-                                    key={row.id}
-                                    venue={row.venue}
-                                    extraMembers={row.extraMembers}
-                                    reservationLabel={label}
-                                    isPast={past}
-                                    expanded={expandedId === row.id}
-                                    onToggle={() => toggleExpand(row.id)}
+                                    key={b.id}
+                                    bookingId={b.id}
+                                    venue={venue}
+                                    extraMembers={extra}
+                                    reservationLabel={dateLabel}
+                                    isPast={isBookingPast(b)}
+                                    expanded={expandedId === b.id}
+                                    onToggle={() => toggle(b.id)}
                                     currentGroupName={currentLabel}
+                                    initialDietaryNotes={b.dietary_notes}
+                                    isBooker={isBooker}
+                                    onReload={() => void loadBookings()}
                                 />
                             );
-                        })
-                    )}
-                </View>
+                        })}
+                    </View>
+                )}
             </ScrollView>
+
+            <NewBookingModal
+                visible={newBookingOpen}
+                onClose={() => setNewBookingOpen(false)}
+                currentGroupId={currentGroup?.id ?? null}
+                onCreated={() => void loadBookings()}
+            />
 
             <VoiceAssistantFab
                 onPress={onVoicePress ?? (() => {})}
@@ -283,12 +353,12 @@ export default function ReservationsPage({
                 visible={filterMenuOpen}
                 title="Filter reservations"
                 onClose={() => setFilterMenuOpen(false)}
-                options={(
-                    Object.keys(RES_FILTER_LABELS) as ResFilterId[]
-                ).map((id) => ({
-                    id,
-                    label: RES_FILTER_LABELS[id],
-                }))}
+                options={(Object.keys(RES_FILTER_LABELS) as ResFilterId[]).map(
+                    (id) => ({
+                        id,
+                        label: RES_FILTER_LABELS[id],
+                    }),
+                )}
                 selectedId={filterId}
                 onSelect={(id) => {
                     setFilterId(id as ResFilterId);
@@ -364,6 +434,7 @@ function OptionSheetModal<T extends string>({
 }
 
 type ReservationCardProps = {
+    bookingId: string;
     venue: string;
     extraMembers: string;
     reservationLabel: string;
@@ -371,9 +442,13 @@ type ReservationCardProps = {
     expanded: boolean;
     onToggle: () => void;
     currentGroupName: string;
+    initialDietaryNotes: string | null;
+    isBooker: boolean;
+    onReload: () => void;
 };
 
 function ReservationCard({
+    bookingId,
     venue,
     extraMembers,
     reservationLabel,
@@ -381,15 +456,41 @@ function ReservationCard({
     expanded,
     onToggle,
     currentGroupName,
+    initialDietaryNotes,
+    isBooker,
+    onReload,
 }: ReservationCardProps) {
-    const [instructions, setInstructions] = useState("");
+    const [instructions, setInstructions] = useState(initialDietaryNotes ?? "");
+    const [saving, setSaving] = useState(false);
     const [attachments, setAttachments] = useState<ReceiptAttachment[]>([]);
+
+    useEffect(() => {
+        setInstructions(initialDietaryNotes ?? "");
+    }, [initialDietaryNotes, bookingId]);
 
     const addReceipt = useCallback(async () => {
         const picked = await pickReceiptDocument();
         if (!picked) return;
         setAttachments((prev) => [...prev, picked]);
     }, []);
+
+    const saveAndClose = useCallback(async () => {
+        if (!isBooker) {
+            onToggle();
+            return;
+        }
+        setSaving(true);
+        try {
+            await updateDietaryNotes(bookingId, instructions);
+            onReload();
+            onToggle();
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : "Save failed";
+            Alert.alert("Could not save", msg);
+        } finally {
+            setSaving(false);
+        }
+    }, [bookingId, instructions, isBooker, onReload, onToggle]);
 
     const isPdf = (a: ReceiptAttachment) =>
         (a.mimeType?.includes("pdf") ?? false) ||
@@ -582,12 +683,18 @@ function ReservationCard({
                 <Text className="mt-3 font-josefin-bold text-[10px] text-[#333]">
                     Special Instructions for the Restaurant
                 </Text>
+                {!isBooker ? (
+                    <Text className="mt-1 font-josefin text-[11px] text-[#666]">
+                        Only the person who booked can edit notes (RLS).
+                    </Text>
+                ) : null}
                 <TextInput
                     value={instructions}
                     onChangeText={setInstructions}
                     placeholder="e.g Whats the occasion?"
                     placeholderTextColor="rgba(0,0,0,0.45)"
                     multiline
+                    editable={isBooker}
                     className="mt-1 min-h-[72px] rounded-xl bg-white px-3 py-2 font-josefin text-[12px] text-[#2c2c2c]"
                 />
 
@@ -601,14 +708,15 @@ function ReservationCard({
                         </Text>
                     </View>
                     <TouchableOpacity
-                        onPress={onToggle}
+                        onPress={() => void saveAndClose()}
+                        disabled={saving}
                         activeOpacity={0.88}
                         className="flex-row items-center gap-2 rounded-full px-4 py-2.5"
-                        style={{ backgroundColor: ORANGE_CTA }}
+                        style={{ backgroundColor: ORANGE_CTA, opacity: saving ? 0.7 : 1 }}
                     >
                         <FontAwesome name="floppy-o" size={14} color="white" />
                         <Text className="font-josefin-bold text-[12px] text-white">
-                            Save and Close
+                            {isBooker ? (saving ? "Saving…" : "Save and Close") : "Close"}
                         </Text>
                     </TouchableOpacity>
                 </View>
@@ -632,5 +740,183 @@ function AvatarStack() {
                 />
             ))}
         </View>
+    );
+}
+
+type NewBookingModalProps = {
+    visible: boolean;
+    onClose: () => void;
+    currentGroupId: string | null;
+    onCreated: () => void;
+};
+
+function NewBookingModal({
+    visible,
+    onClose,
+    currentGroupId,
+    onCreated,
+}: NewBookingModalProps) {
+    const [partners, setPartners] = useState<PartnerRestaurantOption[]>([]);
+    const [loadErr, setLoadErr] = useState<string | null>(null);
+    const [selectedRestaurantId, setSelectedRestaurantId] = useState<string | null>(null);
+    const [partySize, setPartySize] = useState("2");
+    const [scheduledAt, setScheduledAt] = useState("");
+    const [notes, setNotes] = useState("");
+    const [submitting, setSubmitting] = useState(false);
+    const [submitErr, setSubmitErr] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!visible) {
+            return;
+        }
+        let cancelled = false;
+        setLoadErr(null);
+        setSubmitErr(null);
+        void (async () => {
+            try {
+                const list = await fetchPartnerRestaurants();
+                if (!cancelled) {
+                    setPartners(list);
+                    const first = list[0]?.id ?? null;
+                    setSelectedRestaurantId((cur) =>
+                        cur && list.some((p) => p.id === cur) ? cur : first,
+                    );
+                }
+            } catch (e: unknown) {
+                if (!cancelled) {
+                    setLoadErr(e instanceof Error ? e.message : "Failed to load venues");
+                }
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [visible]);
+
+    const submit = useCallback(async () => {
+        const rid = selectedRestaurantId;
+        if (!rid) {
+            setSubmitErr("Pick a restaurant.");
+            return;
+        }
+        const party = Math.round(Number(partySize));
+        if (!Number.isFinite(party) || party <= 0) {
+            setSubmitErr("Enter a valid party size.");
+            return;
+        }
+        setSubmitting(true);
+        setSubmitErr(null);
+        try {
+            await createBookingViaEdge({
+                restaurant_id: rid,
+                party_size: party,
+                scheduled_at: scheduledAt.trim() ? scheduledAt.trim() : null,
+                group_id: currentGroupId,
+                dietary_notes: notes.trim() ? notes.trim() : null,
+            });
+            onCreated();
+            onClose();
+            setPartySize("2");
+            setScheduledAt("");
+            setNotes("");
+        } catch (e: unknown) {
+            setSubmitErr(e instanceof Error ? e.message : "Booking failed");
+        } finally {
+            setSubmitting(false);
+        }
+    }, [currentGroupId, notes, partySize, scheduledAt, selectedRestaurantId, onClose, onCreated]);
+
+    return (
+        <Modal visible={visible} animationType="slide" transparent>
+            <View className="flex-1 justify-end bg-black/40">
+                <View
+                    className="max-h-[85%] rounded-t-3xl bg-white px-4 pb-6 pt-4"
+                    style={{ paddingBottom: 24 }}
+                >
+                    <Text className="font-josefin-bold text-[18px] text-[#2c2c2c]">
+                        New reservation
+                    </Text>
+                    <Text className="mt-1 font-josefin text-[12px] text-[#666]">
+                        Partner venues only. Optional time: ISO local e.g. 2026-04-22T19:00:00
+                    </Text>
+
+                    {loadErr ? (
+                        <Text className="mt-2 font-josefin text-[13px] text-red-600">{loadErr}</Text>
+                    ) : null}
+
+                    <Text className="mt-3 font-josefin-bold text-[12px] text-[#333]">Restaurant</Text>
+                    <ScrollView className="mt-1 max-h-40" nestedScrollEnabled>
+                        {partners.map((p) => (
+                            <TouchableOpacity
+                                key={p.id}
+                                onPress={() => setSelectedRestaurantId(p.id)}
+                                className="mb-1 rounded-xl border px-3 py-2"
+                                style={{
+                                    borderColor: selectedRestaurantId === p.id ? ORANGE_CTA : "#ddd",
+                                    backgroundColor:
+                                        selectedRestaurantId === p.id ? "#fff3e7" : "#fafafa",
+                                }}
+                            >
+                                <Text className="font-josefin text-[14px] text-[#2c2c2c]">
+                                    {p.name}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+
+                    <Text className="mt-3 font-josefin-bold text-[12px] text-[#333]">Party size</Text>
+                    <TextInput
+                        value={partySize}
+                        onChangeText={setPartySize}
+                        keyboardType="number-pad"
+                        className="mt-1 rounded-xl border border-[#ddd] px-3 py-2 font-josefin text-[14px]"
+                    />
+
+                    <Text className="mt-3 font-josefin-bold text-[12px] text-[#333]">
+                        When (optional)
+                    </Text>
+                    <TextInput
+                        value={scheduledAt}
+                        onChangeText={setScheduledAt}
+                        placeholder="ISO datetime or leave empty"
+                        placeholderTextColor={MUTED}
+                        className="mt-1 rounded-xl border border-[#ddd] px-3 py-2 font-josefin text-[14px]"
+                    />
+
+                    <Text className="mt-3 font-josefin-bold text-[12px] text-[#333]">
+                        Special instructions (optional)
+                    </Text>
+                    <TextInput
+                        value={notes}
+                        onChangeText={setNotes}
+                        multiline
+                        className="mt-1 min-h-[64px] rounded-xl border border-[#ddd] px-3 py-2 font-josefin text-[14px]"
+                    />
+
+                    {submitErr ? (
+                        <Text className="mt-2 font-josefin text-[13px] text-red-600">{submitErr}</Text>
+                    ) : null}
+
+                    <View className="mt-4 flex-row justify-end gap-2">
+                        <TouchableOpacity
+                            onPress={onClose}
+                            className="rounded-full bg-[#eee] px-4 py-2.5"
+                        >
+                            <Text className="font-josefin-bold text-[14px] text-[#333]">Cancel</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            onPress={() => void submit()}
+                            disabled={submitting || partners.length === 0}
+                            className="rounded-full px-4 py-2.5"
+                            style={{ backgroundColor: ORANGE_CTA, opacity: submitting ? 0.7 : 1 }}
+                        >
+                            <Text className="font-josefin-bold text-[14px] text-white">
+                                {submitting ? "Booking…" : "Confirm"}
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </View>
+        </Modal>
     );
 }

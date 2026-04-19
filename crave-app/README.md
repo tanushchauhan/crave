@@ -28,6 +28,10 @@ After **`supabase db push`**, redeploy Edge (`./scripts/supabase-deploy.sh` or `
 
 Groups load from Supabase **`dining_groups`** and **`group_members`** (signed-in user, RLS). Add member by **phone** uses E.164 normalization ([`lib/phone.ts`](lib/phone.ts)); the invitee must already have **`users.phone`** set to that value. Apply migrations **`20260422100000_group_invite_and_resolve_rpcs.sql`** and **`20260422101500_users_select_group_peers.sql`** then redeploy Edge if you use **`resolve-group`** (see [docs/supabase.md](../docs/supabase.md) §11).
 
+## Reservations tab
+
+The tab loads **`bookings`** with joins to **`restaurants`** and **`dining_groups`** ([`lib/bookingsApi.ts`](lib/bookingsApi.ts)); search and “current group” filtering are client-side. **Special instructions** map to **`dietary_notes`**; only the **booker** (`bookings.user_id = auth.uid()`) can update them (migration **`20260422140000_bookings_update_booker.sql`**). **Manage Reservations** opens a form that lists partner venues (`is_crave_partner`) and calls **`supabase.functions.invoke('confirm-booking', { body })`** with **`restaurant_id`**, **`party_size`**, and optional **`scheduled_at`**, **`group_id`** (current group when set), **`dietary_notes`**. Apply that migration, redeploy **`confirm-booking`**, and ensure the function has **`CRAVE_SERVICE_ROLE_KEY`** (see [docs/supabase.md](../docs/supabase.md) §11). Receipt uploads on the card remain local-only until the receipt pipeline is wired.
+
 ## iOS Simulator
 
 ```bash
