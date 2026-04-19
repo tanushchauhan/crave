@@ -2,62 +2,79 @@ import Dish from "@/assets/canva/assets/3.svg";
 import Input from "@/components/Input";
 import OnboardingLayout from "@/components/OnboardingLayout";
 import VerticalStack from "@/components/VerticalStack";
-import { AlertCircle, Lock, Phone } from "lucide-react-native";
-import { useState } from "react";
-import { Text, View } from "react-native";
+import { parseToE164 } from "@/lib/phone";
+import { Phone } from "lucide-react-native";
+import { useCallback, useEffect, useState } from "react";
+import { ActivityIndicator, Text, View } from "react-native";
 
 type OnboardingPageTwoProps = {
-    onNext?: () => void;
+    initialPhone?: string;
+    onSendOtpAndContinue: (raw: string) => Promise<string | null>;
     onBack?: () => void;
 };
 
-const SPECIAL_CHARS = /[!@#$%^&*(),.?":{}|<>_\-+=[\]\\/;'`~]/;
-
 export default function OnboardingPageTwo({
-    onNext,
+    initialPhone = "",
+    onSendOtpAndContinue,
     onBack,
 }: OnboardingPageTwoProps) {
-    const [phone, setPhone] = useState("");
-    const [password, setPassword] = useState("");
+    const [phone, setPhone] = useState(initialPhone);
+    const [error, setError] = useState<string | null>(null);
+    const [sending, setSending] = useState(false);
 
-    const showPasswordError =
-        password.length > 0 && !SPECIAL_CHARS.test(password);
+    useEffect(() => {
+        if (initialPhone) {
+            setPhone(initialPhone);
+        }
+    }, [initialPhone]);
+
+    const valid = parseToE164(phone).ok;
+
+    const handleNext = useCallback(async () => {
+        setError(null);
+        setSending(true);
+        try {
+            const err = await onSendOtpAndContinue(phone);
+            if (err) {
+                setError(err);
+            }
+        } finally {
+            setSending(false);
+        }
+    }, [onSendOtpAndContinue, phone]);
 
     return (
         <OnboardingLayout
             currentStep={2}
-            onNext={onNext}
+            onNext={handleNext}
             onBack={onBack}
+            nextDisabled={!valid || sending}
             hero={<Dish width={240} height={200} />}
         >
             <VerticalStack gap={12}>
                 <Input
                     icon={Phone}
-                    placeholder="e.g +1 (682) - 252 - 2215"
+                    placeholder="e.g. (682) 252-2215 or +1…"
                     keyboardType="phone-pad"
                     value={phone}
-                    onChangeText={setPhone}
+                    onChangeText={(t) => {
+                        setPhone(t);
+                        setError(null);
+                    }}
                 />
-                <Input
-                    icon={Lock}
-                    placeholder="Password"
-                    secureTextEntry
-                    value={password}
-                    onChangeText={setPassword}
-                />
-                {showPasswordError && (
-                    <View className="flex-row items-center mt-1 pl-2">
-                        <AlertCircle
-                            size={14}
-                            color="#ff3131"
-                            style={{ marginRight: 6 }}
-                            strokeWidth={3}
-                        />
-                        <Text className="text-[#ff3131] font-josefin-bold text-[12px] font-semibold">
-                            Password Needs To Have Special Characters
+                {error ? (
+                    <Text className="text-[#ff3131] font-josefin-bold text-[12px] px-1">
+                        {error}
+                    </Text>
+                ) : null}
+                {sending ? (
+                    <View className="flex-row items-center gap-2 px-1">
+                        <ActivityIndicator color="#f5861f" />
+                        <Text className="text-[#888] font-josefin-bold text-[12px]">
+                            Sending code…
                         </Text>
                     </View>
-                )}
+                ) : null}
             </VerticalStack>
         </OnboardingLayout>
     );

@@ -715,7 +715,7 @@ Dashboard steps (often **not** exposed to MCP — document for humans):
 | Function | Transport | Auth | Responsibility |
 |----------|-----------|------|------------------|
 | `resolve-group` | HTTPS POST | User JWT | Resolve nickname → member ids + embeddings ([plan.md section 3.5](plan.md#35-how-a-recommendation-is-actually-produced-simplified-for-24-hours)). Maps to voice tool `resolve_group`. |
-| `recommend` | HTTPS POST | User JWT | Filters + pgvector query + optional call to Bedrock re-rank via Lambda. Maps to `recommend_restaurants`. |
+| `recommend` | HTTPS POST | **`Authorization: Bearer <access_token>`** (gateway **`verify_jwt = false`** in [supabase/config.toml](../supabase/config.toml) because ES256 session JWTs can be rejected as `UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM` at the edge; the function calls **`getUser()`** then RPC) | JSON body: **`limit`** (1–50, default 12); optional **`lat`**, **`lng`** (WGS84), **`radius_m`** (meters; Edge clamps **500–50_000**, default **5000** when coords are sent). RPC **`recommend_restaurants_for_user`** ranks by cosine (`restaurants.embedding` vs `users.pref_embedding` when set; else partner / `created_at`). When **`lat`/`lng`** are present, Postgres filters with **`ST_DWithin`** on **`restaurants.location_geog`**; if that returns **no rows**, the RPC falls back to the same ranking **without** geo so the list stays non-empty. Attaches **`menu_items`** per venue. Optional Bedrock re-rank via Lambda remains future work ([docs/aws.md](aws.md)). Maps to `recommend_restaurants`. |
 | `place-order` | HTTPS POST | User JWT | Validates partner + menu availability, inserts **`orders` + `order_items`**, returns order id for confirmation UI; triggers Realtime on **`orders`** for Live Bookings and Orders ([plan.md section 2](plan.md#2-what-were-building) feature 5, [plan.md section 8](plan.md#8-24-hour-build-timeline) voice tools). |
 | `confirm-booking` | HTTPS POST | User JWT | Validates **`is_crave_partner`**, inserts **`bookings`** with `source='partner_app'`, `status='confirmed'` for in-app / voice booking ([plan.md section 4.3](plan.md#43-partner-booking-flow--how-bookings-reach-the-dashboard)); map to voice tool `confirm_booking`. |
 | `match-receipt-items` | HTTPS POST (invoked by Lambda after OCR) | **`x-crave-internal-secret: <CRAVE_INTERNAL_SECRET>`** (same value as Lambda `INTERNAL_HMAC_SECRET`); **`verify_jwt = false`** in [supabase/config.toml](../supabase/config.toml) | Runs RPC **`match_receipt_lines_exact_and_trigram`** (exact + trigram on `menu_items`) then optional stage 3: calls **`POST {CRAVE_AWS_API_BASE}/internal/embeddings/text`** with the same secret, then RPC **`match_receipt_line_embedding`** (pgvector cosine on `menu_items.embedding`). **Hosted secrets:** `CRAVE_INTERNAL_SECRET`, `CRAVE_SERVICE_ROLE_KEY`, `SUPABASE_URL`, **`CRAVE_AWS_API_BASE`** (API Gateway origin only, no path). |
@@ -728,6 +728,8 @@ Dashboard steps (often **not** exposed to MCP — document for humans):
 **Idempotency:** `match-receipt-items` accepts `receipt_id` + optional `s3_etag`; if the capture’s `s3_etag` matches and line rows already exist, returns **`skipped: true`** (no duplicate Bedrock embedding work).
 
 **Client integration env:** see [docs/client-env.md](client-env.md). Deploy Edge + DB with [scripts/supabase-deploy.sh](../scripts/supabase-deploy.sh).
+
+**Postgres (recommendations):** migration `20260419180000_recommend_restaurants_for_user.sql` introduced the RPC; migration **`20260420120000_recommend_restaurants_geo.sql`** replaces the signature with **`public.recommend_restaurants_for_user(p_limit integer default 12, p_lat double precision default null, p_lng double precision default null, p_radius_m double precision default null)`** (`SECURITY INVOKER`). **`authenticated`** may `EXECUTE` the function. Radius is clamped in SQL to **500–50_000** m; **`p_radius_m` null** uses **5000** m when geo is active.
 
 ---
 
@@ -771,6 +773,7 @@ Shipped as a **Node script** under `tools/supabase-seed/` (see [tools/supabase-s
 - [ ] RLS: user B cannot `select` user A’s `receipt_captures`.
 - [ ] `get_advisors`: resolve **ERROR** level security issues; accept **WARN** only if documented.
 - [ ] Edge: `get_logs` for `edge_functions` clean on cold start.
+- [ ] `recommend` Edge + RPC `recommend_restaurants_for_user`: signed-in user gets non-empty `recommendations` after [tools/supabase-seed](../tools/supabase-seed) (or manual rows with `restaurants.embedding`).
 
 ---
 

@@ -18,5 +18,18 @@ for (const name of [...envNames].reverse()) {
 }
 
 // When app.config.js exists, Expo uses it; keep canonical fields in app.json.
+// Expose Supabase URL/anon from root .env: Metro only inlines EXPO_PUBLIC_*; many monorepos
+// only set SUPABASE_URL + SUPABASE_ANON_KEY, so we pass them through `extra` for lib/supabase.ts.
 const { expo } = require("./app.json");
-module.exports = expo;
+module.exports = {
+    ...expo,
+    extra: {
+        ...(expo.extra ?? {}),
+        supabaseUrl:
+            process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "",
+        supabaseAnonKey:
+            process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
+            process.env.SUPABASE_ANON_KEY ||
+            "",
+    },
+};

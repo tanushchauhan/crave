@@ -1,3 +1,6 @@
+import { logAuthSession } from "@/lib/authDebug";
+import { parseToE164 } from "@/lib/phone";
+import { supabase } from "@/lib/supabase";
 import OnboardingPageOne from "@/pages/OnboardingPageOne";
 import OnboardingPageThree from "@/pages/OnboardingPageThree";
 import OnboardingPageTwo from "@/pages/OnboardingPageTwo";
@@ -17,6 +20,7 @@ type OnboardingFlowProps = {
 
 export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     const [step, setStep] = useState(0);
+    const [phoneE164, setPhoneE164] = useState("");
     const width = Dimensions.get("window").width;
     const translateX = useSharedValue(0);
 
@@ -24,13 +28,75 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
         translateX.value = withSpring(-step * width, SPRING);
     }, [step, width, translateX]);
 
+    const go = useCallback((i: number) => {
+        setStep(Math.max(0, Math.min(2, i)));
+    }, []);
+
     const slideStyle = useAnimatedStyle(() => ({
         transform: [{ translateX: translateX.value }],
     }));
 
-    const go = useCallback((i: number) => {
-        setStep(Math.max(0, Math.min(2, i)));
-    }, []);
+    const sendOtp = useCallback(
+        async (raw: string): Promise<string | null> => {
+            const parsed = parseToE164(raw);
+            if (!parsed.ok) {
+                return parsed.message;
+            }
+            const { error } = await supabase.auth.signInWithOtp({
+                phone: parsed.e164,
+                options: { shouldCreateUser: true },
+            });
+            if (error) {
+                return error.message;
+            }
+            setPhoneE164(parsed.e164);
+            return null;
+        },
+        [],
+    );
+
+    const handleSendOtpAndGoToOtp = useCallback(
+        async (raw: string): Promise<string | null> => {
+            const err = await sendOtp(raw);
+            if (err) {
+                return err;
+            }
+            go(2);
+            return null;
+        },
+        [go, sendOtp],
+    );
+
+    const handleResend = useCallback(async (): Promise<string | null> => {
+        if (!phoneE164) {
+            return "Missing phone; go back and try again.";
+        }
+        const { error } = await supabase.auth.signInWithOtp({
+            phone: phoneE164,
+            options: { shouldCreateUser: true },
+        });
+        return error ? error.message : null;
+    }, [phoneE164]);
+
+    const handleVerifyOtp = useCallback(
+        async (code: string): Promise<string | null> => {
+            if (!phoneE164) {
+                return "Missing phone; go back and try again.";
+            }
+            const { data, error } = await supabase.auth.verifyOtp({
+                phone: phoneE164,
+                token: code.replace(/\D/g, ""),
+                type: "sms",
+            });
+            if (error) {
+                return error.message;
+            }
+            logAuthSession("verifyOtp (signed in)", data.session);
+            onComplete();
+            return null;
+        },
+        [onComplete, phoneE164],
+    );
 
     return (
         <View className="flex-1 overflow-hidden bg-white">
@@ -46,13 +112,15 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
                 </View>
                 <View style={{ width }} className="flex-1">
                     <OnboardingPageTwo
-                        onNext={() => go(2)}
+                        initialPhone={phoneE164}
+                        onSendOtpAndContinue={handleSendOtpAndGoToOtp}
                         onBack={() => go(0)}
                     />
                 </View>
                 <View style={{ width }} className="flex-1">
                     <OnboardingPageThree
-                        onNext={onComplete}
+                        onVerify={handleVerifyOtp}
+                        onResend={handleResend}
                         onBack={() => go(1)}
                     />
                 </View>
