@@ -193,6 +193,13 @@ rb = (os.environ.get("RECEIPTS_BUCKET") or os.environ.get("CRAVE_RECEIPTS_BUCKET
 if rb:
     v["RECEIPTS_BUCKET"] = rb
 
+hmac_proxy = (os.environ.get("INTERNAL_HMAC_SECRET") or os.environ.get("CRAVE_INTERNAL_SECRET") or "").strip()
+if hmac_proxy:
+    v["INTERNAL_HMAC_SECRET"] = hmac_proxy
+titan = (os.environ.get("TITAN_EMBEDDING_MODEL_ID") or "").strip()
+if titan:
+    v["TITAN_EMBEDDING_MODEL_ID"] = titan
+
 v = {k: val for k, val in v.items() if val}
 if not v.get("SUPABASE_ANON_KEY"):
     v.setdefault("CRAVE_PROXY_READY", "1")
@@ -447,6 +454,7 @@ print(next((r['RouteId'] for r in d.get('Items',[]) if r.get('RouteKey')==k), ''
   }
 
   upsert_route "POST /receipts/signed-url"
+  upsert_route "POST /internal/embeddings/text"
   upsert_route "POST /voice/place-order"
   upsert_route "POST /voice/resolve-group"
   upsert_route "POST /voice/recommend"
@@ -511,7 +519,7 @@ print(next((r['RouteId'] for r in d.get('Items',[]) if r.get('RouteKey')=='POST 
     "http://localhost:8081"
   ],
   "AllowMethods": ["GET", "POST", "OPTIONS"],
-  "AllowHeaders": ["authorization", "content-type", "apikey"]
+  "AllowHeaders": ["authorization", "content-type", "apikey", "x-crave-internal-secret"]
 }
 CORS
   aws apigatewayv2 update-api --api-id "$API_ID" --cors-configuration "file://${GEN}/http-api-cors.json"

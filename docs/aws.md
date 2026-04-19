@@ -432,6 +432,7 @@ echo "$API_ID"
 | Method | Route | Integration target |
 |--------|-------|----------------------|
 | POST | `/receipts/signed-url` | **`crave-bedrock-proxy`**: validates Supabase user JWT + booking access (RLS), returns presigned **S3 PUT** for `receipts/{user_id}/{booking_id}.jpg` (or `.png` / `.webp`; see §6.1 key layout). Optional presigned **GET** when body `include_get_url: true`. |
+| POST | `/internal/embeddings/text` | **`crave-bedrock-proxy`**: **`x-crave-internal-secret`** must match **`INTERNAL_HMAC_SECRET`** (same as `match-receipt-items` / `crave-receipt-ocr`). Body **`{ "input": "…" }`** → Bedrock **Titan Text Embeddings** (`TITAN_EMBEDDING_MODEL_ID`, default **`amazon.titan-embed-text-v1`**) → **`{ "embedding": number[1536], "model_id": "…" }`**. |
 | POST | `/v1/chat/completions` | `bedrock-proxy`: OpenAI Chat Completions → Bedrock **Converse** (ElevenLabs Custom LLM); Bearer **`ELEVENLABS_CUSTOM_LLM_SECRET`** |
 | POST | `/v1/responses` | `bedrock-proxy`: OpenAI Responses API (`input`, `instructions`, …) → **Converse**; same Bearer; SSE uses **`event:`** lines per ElevenLabs |
 | POST | `/bedrock/converse` | `bedrock-proxy` (Claude / Nova / etc.) |

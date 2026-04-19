@@ -9,9 +9,15 @@
  * - BEDROCK_TEXT_MODEL_ID (optional) — when /bedrock/converse or OpenAI shims are wired
  * - ELEVENLABS_CUSTOM_LLM_SECRET (optional) — Bearer for POST /v1/chat/completions and POST /v1/responses (ElevenLabs Custom LLM).
  *   OpenAI-style `tools` in the body are ignored (text-only Bedrock); ElevenLabs system tools still attach to requests.
+ * - INTERNAL_HMAC_SECRET or CRAVE_INTERNAL_SECRET — for POST /internal/embeddings/text (x-crave-internal-secret; same as match-receipt-items / receipt-ocr).
+ * - TITAN_EMBEDDING_MODEL_ID (optional) — default amazon.titan-embed-text-v1 (1536-d).
  */
 
-import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
+import {
+  BedrockRuntimeClient,
+  ConverseCommand,
+  InvokeModelCommand,
+} from "@aws-sdk/client-bedrock-runtime";
 import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -20,7 +26,8 @@ const UUID_RE =
 
 const cors = {
   "access-control-allow-origin": "*",
-  "access-control-allow-headers": "authorization,content-type,apikey",
+  "access-control-allow-headers":
+    "authorization,content-type,apikey,x-crave-internal-secret",
   "access-control-allow-methods": "GET,POST,OPTIONS",
 };
 
@@ -496,6 +503,71 @@ async function handleReceiptsSignedUrl(event) {
   return response(200, out);
 }
 
+function checkInternalHmacSecret(event) {
+  const expected = (
+    process.env.INTERNAL_HMAC_SECRET ||
+    process.env.CRAVE_INTERNAL_SECRET ||
+    ""
+  ).trim();
+  if (!expected) {
+    return { err: response(503, { error: "internal_hmac_not_configured" }) };
+  }
+  const provided = (getHeader(event.headers, "x-crave-internal-secret") || "").trim();
+  if (provided !== expected) {
+    return { err: response(403, { error: "forbidden" }) };
+  }
+  return {};
+}
+
+/** POST /internal/embeddings/text — Titan Text Embeddings G1 (1536); gated by x-crave-internal-secret. */
+async function handleInternalEmbeddingsText(event) {
+  const gate = checkInternalHmacSecret(event);
+  if (gate.err) return gate.err;
+
+  const body = parseBody(event);
+  const text =
+    typeof body.input === "string"
+      ? body.input
+      : typeof body.inputText === "string"
+        ? body.inputText
+        : "";
+  if (!String(text).trim()) {
+    return response(400, { error: "input_required" });
+  }
+
+  const modelId =
+    (process.env.TITAN_EMBEDDING_MODEL_ID || "").trim() ||
+    "amazon.titan-embed-text-v1";
+  const client = new BedrockRuntimeClient({});
+  const payload = JSON.stringify({
+    inputText: String(text).slice(0, 8192),
+  });
+
+  try {
+    const res = await client.send(
+      new InvokeModelCommand({
+        modelId,
+        contentType: "application/json",
+        accept: "application/json",
+        body: Buffer.from(payload),
+      }),
+    );
+    const raw = new TextDecoder().decode(res.body);
+    const json = JSON.parse(raw);
+    const embedding = json.embedding;
+    if (!Array.isArray(embedding) || embedding.length !== 1536) {
+      return response(502, {
+        error: "bedrock_bad_embedding_shape",
+        length: Array.isArray(embedding) ? embedding.length : null,
+      });
+    }
+    return response(200, { embedding, model_id: modelId });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return response(502, { error: "bedrock_invoke_failed", message: msg });
+  }
+}
+
 export const handler = async (event) => {
   const method =
     event.requestContext?.http?.method ?? event.httpMethod ?? "GET";
@@ -513,6 +585,13 @@ export const handler = async (event) => {
 
   if (path.endsWith("/receipts/signed-url") || path === "/receipts/signed-url") {
     return handleReceiptsSignedUrl(event);
+  }
+
+  if (
+    path.endsWith("/internal/embeddings/text") ||
+    path === "/internal/embeddings/text"
+  ) {
+    return handleInternalEmbeddingsText(event);
   }
 
   const anon = process.env.SUPABASE_ANON_KEY;

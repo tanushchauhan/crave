@@ -718,14 +718,16 @@ Dashboard steps (often **not** exposed to MCP — document for humans):
 | `recommend` | HTTPS POST | User JWT | Filters + pgvector query + optional call to Bedrock re-rank via Lambda. Maps to `recommend_restaurants`. |
 | `place-order` | HTTPS POST | User JWT | Validates partner + menu availability, inserts **`orders` + `order_items`**, returns order id for confirmation UI; triggers Realtime on **`orders`** for Live Bookings and Orders ([plan.md section 2](plan.md#2-what-were-building) feature 5, [plan.md section 8](plan.md#8-24-hour-build-timeline) voice tools). |
 | `confirm-booking` | HTTPS POST | User JWT | Validates **`is_crave_partner`**, inserts **`bookings`** with `source='partner_app'`, `status='confirmed'` for in-app / voice booking ([plan.md section 4.3](plan.md#43-partner-booking-flow--how-bookings-reach-the-dashboard)); map to voice tool `confirm_booking`. |
-| `match-receipt-items` | HTTPS POST (invoked by Lambda after OCR) | **Service internal** — use `Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>` only on server; better: HMAC secret shared with Lambda | Writes `receipt_line_items` with match metadata ([plan.md section 3.3 step 4](plan.md#33-bill-splitting--post-meal-feedback-loop-how-it-feeds-the-pipeline)). |
+| `match-receipt-items` | HTTPS POST (invoked by Lambda after OCR) | **`x-crave-internal-secret: <CRAVE_INTERNAL_SECRET>`** (same value as Lambda `INTERNAL_HMAC_SECRET`); **`verify_jwt = false`** in [supabase/config.toml](../supabase/config.toml) | Runs RPC **`match_receipt_lines_exact_and_trigram`** (exact + trigram on `menu_items`) then optional stage 3: calls **`POST {CRAVE_AWS_API_BASE}/internal/embeddings/text`** with the same secret, then RPC **`match_receipt_line_embedding`** (pgvector cosine on `menu_items.embedding`). **Hosted secrets:** `CRAVE_INTERNAL_SECRET`, `CRAVE_SERVICE_ROLE_KEY`, `SUPABASE_URL`, **`CRAVE_AWS_API_BASE`** (API Gateway origin only, no path). |
 | `generate-ad` (optional) | HTTPS POST | Staff JWT; verify **`restaurants.owner_user_id = auth.uid()`** for the campaign’s `restaurant_id` | Persist `ad_campaigns` / `ad_assets` after Lambda returns S3 URLs ([plan.md section 4.1](plan.md#41-dashboard-pages-what-ships-for-the-demo)). |
 
 **Voice agent tools** ([plan.md section 8](plan.md#8-24-hour-build-timeline)): **ElevenLabs Conversational AI** should expose exactly **`resolve_group`**, **`recommend_restaurants`**, **`confirm_booking`**, **`place_order`** — each implemented as HTTP from the agent runtime to **Lambda → Edge** (or Edge-only where no Bedrock call is needed), never with AWS keys in the mobile binary.
 
 **Split with AWS:** Heavy Bedrock calls should run in **Lambda** ([plan.md section 5.2](plan.md#52-aws--free-tier-only-usage-best-use-of-aws-track)); Edge Functions orchestrate Postgres and call Lambda over HTTPS with mutual secret.
 
-**Idempotency:** `match-receipt-items` accepts `receipt_id` + optional `s3_etag`; upsert lines or no-op if already processed.
+**Idempotency:** `match-receipt-items` accepts `receipt_id` + optional `s3_etag`; if the capture’s `s3_etag` matches and line rows already exist, returns **`skipped: true`** (no duplicate Bedrock embedding work).
+
+**Client integration env:** see [docs/client-env.md](client-env.md). Deploy Edge + DB with [scripts/supabase-deploy.sh](../scripts/supabase-deploy.sh).
 
 ---
 
