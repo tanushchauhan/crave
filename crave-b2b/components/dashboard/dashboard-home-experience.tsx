@@ -1,13 +1,16 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { type FormEvent } from "react";
 import Image from "next/image";
 import { AiTrendingTable } from "@/components/dashboard/ai-trending-table";
 import { DashboardKpiGrid } from "@/components/dashboard/dashboard-kpi-grid";
 import { LiveBookingsTable } from "@/components/dashboard/live-bookings-table";
 import { MenuPerformanceTable } from "@/components/dashboard/menu-performance-table";
 import { ChatSearchBar } from "@/components/crave-assistant/chat-search-bar";
+import {
+  ASK_DRAFT_STORAGE_KEY,
+  type UserContentPart,
+} from "@/lib/b2b-chat/multipart-messages";
 import type { DashboardLoadResult } from "@/lib/dashboard/load-dashboard-data";
 import { DASHBOARD_LIVE_MERGED_CAP } from "@/lib/dashboard/load-dashboard-data";
 
@@ -27,12 +30,21 @@ export function DashboardHomeExperience({
     ? `Welcome to Your Dashboard — ${restaurant.name}`
     : "Welcome to Your Dashboard";
 
-  function handleSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const data = new FormData(e.currentTarget);
-    const q = String(data.get("q") ?? "").trim();
-    if (!q) return;
-    router.push(`/dashboard/ask?q=${encodeURIComponent(q)}`);
+  function handleAskSend(text: string, parts: UserContentPart[]) {
+    if (parts.length > 0) {
+      try {
+        sessionStorage.setItem(ASK_DRAFT_STORAGE_KEY, JSON.stringify({ text, parts }));
+      } catch {
+        window.alert(
+          "Those attachments are too large to send from the dashboard. Open Ask Crave from the menu and attach files there.",
+        );
+        return;
+      }
+      router.push("/dashboard/ask");
+      return;
+    }
+    if (!text.trim()) return;
+    router.push(`/dashboard/ask?q=${encodeURIComponent(text)}`);
   }
 
   return (
@@ -84,12 +96,9 @@ export function DashboardHomeExperience({
               }}
             />
           </div>
-          <form
-            onSubmit={handleSubmit}
-            className="mt-3 w-full max-w-3xl sm:mt-4 lg:max-w-4xl"
-          >
-            <ChatSearchBar name="q" id="dashboard-home-prechat-search" />
-          </form>
+          <div className="mt-3 w-full max-w-3xl sm:mt-4 lg:max-w-4xl">
+            <ChatSearchBar id="dashboard-home-prechat-search" onSend={handleAskSend} />
+          </div>
         </div>
 
         <div className="mt-8 min-w-0 sm:mt-10">

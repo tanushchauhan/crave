@@ -2,13 +2,19 @@ import type { MenuItemDbRow, RestaurantSummary } from "@/lib/menu/types";
 import { formatPriceCents, parseMetadata } from "@/lib/menu/types";
 
 /** Keep prompt bounded for Bedrock input limits and cost. */
-const MAX_MENU_ITEMS = 100;
-const MAX_DESC_CHARS = 240;
+const DEFAULT_MAX_MENU_ITEMS = 100;
+const DEFAULT_MAX_DESC_CHARS = 240;
 
 export type MenuContextRow = Pick<
   MenuItemDbRow,
   "name" | "description" | "price_cents" | "is_available" | "metadata"
 >;
+
+export type RestaurantPromptOptions = {
+  /** Lower when the user sends images/PDFs so vision calls stay under model limits. */
+  maxMenuItems?: number;
+  maxDescChars?: number;
+};
 
 /**
  * Injected as the first `system` message on every B2B chat request so the model
@@ -17,7 +23,10 @@ export type MenuContextRow = Pick<
 export function buildB2bRestaurantSystemPrompt(
   restaurant: RestaurantSummary,
   items: MenuContextRow[],
+  options?: RestaurantPromptOptions,
 ): string {
+  const MAX_MENU_ITEMS = options?.maxMenuItems ?? DEFAULT_MAX_MENU_ITEMS;
+  const MAX_DESC_CHARS = options?.maxDescChars ?? DEFAULT_MAX_DESC_CHARS;
   const tags = restaurant.cuisine_tags?.filter(Boolean).join(", ") || "—";
   const lines: string[] = [
     "You are Crave, an assistant for a restaurant operator using the CRAVE B2B dashboard.",
@@ -50,9 +59,9 @@ export function buildB2bRestaurantSystemPrompt(
     lines.push(parts.join(" — "));
   }
 
-  if (items.length > MAX_MENU_ITEMS) {
+  if (items.length > slice.length) {
     lines.push(
-      `\n(${items.length - MAX_MENU_ITEMS} more items exist but were omitted to save context.)`,
+      `\n(${items.length - slice.length} more items exist but were omitted to save context.)`,
     );
   } else if (slice.length === 0) {
     lines.push("(No menu items on file yet.)");

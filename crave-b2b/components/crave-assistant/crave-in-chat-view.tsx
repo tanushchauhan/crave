@@ -1,10 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Bot, CircleUser, Menu, PanelLeftClose, Search } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Bot, CircleUser, FileText, Menu, PanelLeftClose, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { ChatSearchBar } from "@/components/crave-assistant/chat-search-bar";
 import { cn } from "@/lib/utils";
+import {
+  buildInitialUserTurn,
+  type ApiChatMessage,
+  type UserContentPart,
+  type UserFilePart,
+  type UserImagePart,
+  type UserTextPart,
+} from "@/lib/b2b-chat/multipart-messages";
 
 const SIDEBAR_W = 280;
 
@@ -14,20 +22,68 @@ const convoItems = Array.from({ length: 12 }, (_, i) => ({
   active: i === 0,
 }));
 
-type ChatTurn = { role: "user" | "assistant"; content: string };
+type ChatTurn = ApiChatMessage;
 
 type CraveInChatViewProps = {
   initialUserMessage: string;
+  initialUserParts?: UserContentPart[];
 };
 
-export function CraveInChatView({ initialUserMessage }: CraveInChatViewProps) {
+function UserBubbleBody({ content }: { content: string | UserContentPart[] }) {
+  if (typeof content === "string") {
+    return (
+      <p className="whitespace-pre-wrap break-words leading-relaxed">{content}</p>
+    );
+  }
+  const texts = content
+    .filter((p): p is UserTextPart => p.type === "text")
+    .map((p) => p.text);
+  const imgs = content.filter((p): p is UserImagePart => p.type === "image_url");
+  const pdfs = content.filter((p): p is UserFilePart => p.type === "file");
+  return (
+    <div className="space-y-2">
+      {texts.length > 0 ? (
+        <p className="whitespace-pre-wrap break-words leading-relaxed">{texts.join("\n")}</p>
+      ) : null}
+      {imgs.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {imgs.map((p, i) => (
+            // eslint-disable-next-line @next/next/no-img-element -- data URLs from user upload
+            <img
+              key={i}
+              src={p.image_url.url}
+              alt=""
+              className="max-h-44 max-w-[11rem] rounded-lg border border-white/40 object-cover shadow-sm"
+            />
+          ))}
+        </div>
+      ) : null}
+      {pdfs.length > 0 ? (
+        <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs font-medium text-dark/85">
+          {pdfs.map((p, i) => (
+            <li key={i} className="flex items-center gap-1">
+              <FileText className="size-3.5 shrink-0" aria-hidden />
+              {p.file.filename}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+export function CraveInChatView({
+  initialUserMessage,
+  initialUserParts = [],
+}: CraveInChatViewProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [composerEntered, setComposerEntered] = useState(false);
-  const [messages, setMessages] = useState<ChatTurn[]>(() =>
-    initialUserMessage.trim()
-      ? [{ role: "user", content: initialUserMessage.trim() }]
-      : [],
-  );
+  const [messages, setMessages] = useState<ChatTurn[]>(() => {
+    const t = initialUserMessage.trim();
+    const p = initialUserParts ?? [];
+    if (!t && p.length === 0) return [];
+    return [buildInitialUserTurn(initialUserMessage, p)];
+  });
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
@@ -80,26 +136,14 @@ export function CraveInChatView({ initialUserMessage }: CraveInChatViewProps) {
   }
 
   useEffect(() => {
-    const msg = initialUserMessage.trim();
-    if (!msg) return;
+    const t = initialUserMessage.trim();
+    const p = initialUserParts ?? [];
+    if (!t && p.length === 0) return;
     const ac = new AbortController();
-    const thread: ChatTurn[] = [{ role: "user", content: msg }];
-    void runCompletion(thread, ac.signal);
+    void runCompletion([buildInitialUserTurn(initialUserMessage, p)], ac.signal);
     return () => ac.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- bootstrap first turn only from route props
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- bootstrap once per mount (keyed by parent)
   }, []);
-
-  async function handleComposerSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    if (pending) return;
-    const fd = new FormData(e.currentTarget);
-    const q = String(fd.get("q") ?? "").trim();
-    if (!q) return;
-    const thread = [...messages, { role: "user" as const, content: q }];
-    setMessages(thread);
-    e.currentTarget.reset();
-    await runCompletion(thread);
-  }
 
   return (
     <div className="flex h-full min-h-0 w-full overflow-hidden bg-white font-sans">
@@ -192,7 +236,13 @@ export function CraveInChatView({ initialUserMessage }: CraveInChatViewProps) {
                       : "border border-light bg-white text-dark shadow-sm",
                   )}
                 >
-                  <p className="whitespace-pre-wrap break-words leading-relaxed">{m.content}</p>
+                  {m.role === "user" ? (
+                    <UserBubbleBody content={m.content} />
+                  ) : (
+                    <p className="whitespace-pre-wrap break-words leading-relaxed">
+                      {typeof m.content === "string" ? m.content : ""}
+                    </p>
+                  )}
                 </div>
               </div>
             ))}
@@ -220,15 +270,17 @@ export function CraveInChatView({ initialUserMessage }: CraveInChatViewProps) {
           )}
         >
           <div className="mx-auto max-w-3xl lg:max-w-4xl">
-            <form
-              onSubmit={handleComposerSubmit}
-              className={cn(pending && "pointer-events-none opacity-60")}
-            >
-              <ChatSearchBar name="q" id="crave-inchat-composer" disabled={pending} />
-              <button type="submit" className="sr-only">
-                Send
-              </button>
-            </form>
+            <ChatSearchBar
+              id="crave-inchat-composer"
+              disabled={pending}
+              onSend={async (text, parts) => {
+                if (!text.trim() && parts.length === 0) return;
+                const nextUser = buildInitialUserTurn(text, parts);
+                const thread = [...messages, nextUser];
+                setMessages(thread);
+                await runCompletion(thread);
+              }}
+            />
           </div>
         </footer>
       </div>

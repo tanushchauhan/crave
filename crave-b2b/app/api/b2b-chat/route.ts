@@ -1,8 +1,15 @@
 import { NextResponse } from "next/server";
 import { buildB2bRestaurantSystemPrompt } from "@/lib/b2b-chat/restaurant-context";
+import type { UserContentPart } from "@/lib/b2b-chat/multipart-messages";
+import {
+  isAllowedImageDataUrl,
+  MAX_IMAGE_BYTES,
+  MAX_PDF_BYTES,
+  normalizeImageDataUrl,
+} from "@/lib/b2b-chat/multipart-messages";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
-type ClientMessage = { role: "user" | "assistant"; content: string };
+type ClientMessage = { role: "user" | "assistant"; content: string | UserContentPart[] };
 
 function resolveB2bChatUrl(): string | null {
   const full = process.env.CRAVE_B2B_CHAT_URL?.trim();
@@ -10,6 +17,53 @@ function resolveB2bChatUrl(): string | null {
   const base = process.env.CRAVE_AWS_API_BASE?.trim().replace(/\/$/, "");
   if (!base) return null;
   return `${base}/b2b/chat`;
+}
+
+function sanitizeUserContent(content: unknown): string | UserContentPart[] | null {
+  if (typeof content === "string") {
+    const t = content.trim();
+    return t.length ? t : null;
+  }
+  if (!Array.isArray(content)) return null;
+  const parts: UserContentPart[] = [];
+  for (const p of content) {
+    if (!p || typeof p !== "object") continue;
+    const typ = (p as { type?: unknown }).type;
+    if (typ === "text" && typeof (p as { text?: unknown }).text === "string") {
+      const tx = (p as { text: string }).text.trim();
+      if (tx) parts.push({ type: "text", text: tx });
+    } else if (typ === "image_url") {
+      const url = (p as { image_url?: { url?: unknown } }).image_url?.url;
+      if (typeof url !== "string") continue;
+      const normalized = normalizeImageDataUrl(url);
+      if (!isAllowedImageDataUrl(normalized)) continue;
+      const approx = Math.floor((normalized.length * 3) / 4);
+      if (approx <= MAX_IMAGE_BYTES) {
+        parts.push({ type: "image_url", image_url: { url: normalized } });
+      }
+    } else if (typ === "file") {
+      const f = (p as { file?: unknown }).file;
+      if (f && typeof f === "object") {
+        const fn = (f as { filename?: unknown }).filename;
+        const fd = (f as { file_data?: unknown }).file_data;
+        if (
+          typeof fn === "string" &&
+          typeof fd === "string" &&
+          fn.toLowerCase().endsWith(".pdf")
+        ) {
+          const raw = fd.replace(/\s/g, "");
+          const approx = Math.floor((raw.length * 3) / 4);
+          if (approx > 0 && approx <= MAX_PDF_BYTES) {
+            parts.push({
+              type: "file",
+              file: { filename: fn.slice(0, 200), file_data: raw },
+            });
+          }
+        }
+      }
+    }
+  }
+  return parts.length ? parts : null;
 }
 
 function sanitizeClientMessages(raw: unknown): ClientMessage[] | null {
@@ -21,12 +75,29 @@ function sanitizeClientMessages(raw: unknown): ClientMessage[] | null {
     const role = typeof roleRaw === "string" ? roleRaw.toLowerCase() : "";
     if (role !== "user" && role !== "assistant") continue;
     const content = (m as { content?: unknown }).content;
-    if (typeof content !== "string") continue;
-    const trimmed = content.trim();
-    if (!trimmed) continue;
-    out.push({ role: role as ClientMessage["role"], content: trimmed });
+    if (role === "assistant") {
+      if (typeof content !== "string") continue;
+      const trimmed = content.trim();
+      if (!trimmed) continue;
+      out.push({ role: "assistant", content: trimmed });
+      continue;
+    }
+    const userC = sanitizeUserContent(content);
+    if (userC === null) continue;
+    out.push({ role: "user", content: userC });
   }
   return out.length ? out : null;
+}
+
+function messagesHaveUserAttachments(msgs: ClientMessage[]): boolean {
+  for (const m of msgs) {
+    if (m.role !== "user") continue;
+    if (typeof m.content === "string") continue;
+    for (const part of m.content) {
+      if (part.type === "image_url" || part.type === "file") return true;
+    }
+  }
+  return false;
 }
 
 export async function POST(req: Request) {
@@ -85,7 +156,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: iErr.message }, { status: 500 });
   }
 
-  const systemPrompt = buildB2bRestaurantSystemPrompt(restaurant, items ?? []);
+  const compactMenu = messagesHaveUserAttachments(clientMessages);
+  const systemPrompt = buildB2bRestaurantSystemPrompt(restaurant, items ?? [], {
+    ...(compactMenu
+      ? { maxMenuItems: 48, maxDescChars: 140 }
+      : {}),
+  });
 
   const upstreamPayload: Record<string, unknown> = {
     messages: [{ role: "system", content: systemPrompt }, ...clientMessages],
