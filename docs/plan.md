@@ -226,12 +226,13 @@ Supabase is the backbone. Every major feature touches it, which is exactly what 
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Postgres**                  | Primary data store: users, groups, restaurants, menu items, preference vectors, bookings, ad campaigns, analytics events.                                                            |
 | **pgvector extension (HNSW)** | Embeddings for restaurants, menu items, users. Powers semantic search, group recommendation ranking, and the "restaurants like this one" feature.                                    |
-| **Auth (phone OTP)**          | Phone-number login matches the product vision and enables the group SMS invite flow.                                                                                                 |
+| **Auth (phone OTP)**          | **Consumer (Expo):** phone-number login matches the product vision and enables the group SMS invite flow.                                                                            |
+| **Auth (email/password, B2B)** | **Restaurant dashboard ([crave-b2b](../crave-b2b/)):** email + password; signup links **`restaurants.owner_user_id`** via RPC **`register_restaurant_on_signup`** (see [docs/supabase.md](supabase.md#10-auth)). |
 | **Realtime**                  | Live group voting — when a group member votes, other members see the count update instantly. Also powers the "your friend just joined the group" notification during SMS onboarding. |
 | **Edge Functions (Deno)**     | `resolve-group`, `recommend`, **`place-order`** (voice orders → `orders` / `order_items`), **`match-receipt-items`** (Lambda-invoked matcher), optional **`generate-ad`** (persist campaigns after S3 upload). Heavy Bedrock calls stay in Lambda; Edge holds Postgres + JWT validation. |
 | **Row-Level Security**        | B2B users are scoped by **`restaurants.owner_user_id`** (the linked dashboard account). Consumer rows are scoped per-user. Demonstrable security story for judges.                                                                                     |
 
-**Demo-worthy Supabase moment:** Open the Supabase dashboard live during the pitch and show the HNSW index, the realtime group vote firing, and the RLS policies. Judges love this.
+**Demo-worthy Supabase moment:** Open the Supabase dashboard live during the pitch and show the HNSW index, the realtime group vote firing, and the RLS policies (consumer phone auth + B2B email auth both use the same **`auth.users`** / JWT story). Judges love this.
 
 ### 5.2 AWS — free-tier-only usage (Best Use of AWS track)
 
@@ -251,7 +252,7 @@ Strict rule: **free tier only, or services that have per-request pricing low eno
 ### 5.3 Everything else
 
 - **Mobile app:** React Native + Expo (one codebase, works in simulator for demo, hot reload saves hours).
-- **B2B Dashboard:** Next.js 15 + Tailwind + shadcn/ui, deployed to Vercel.
+- **B2B Dashboard:** Next.js (see [crave-b2b](../crave-b2b/)) + Tailwind + shadcn/ui, deployed to Vercel; Supabase Auth email/password and **`register_restaurant_on_signup`** for partner scope ([docs/supabase.md](supabase.md#10-auth), [docs/client-env.md](client-env.md)).
 - **Voice UI:** ElevenLabs Conversational AI SDK in React Native.
 - **Animations (Image Playground-style UI):** Framer Motion + SVG. The "orbit" is a parent SVG with child avatar nodes animated on circular paths, plus a central gradient blur that pulses when the agent is listening.
 - **Video rendering (ads):** Remotion running in a Lambda, outputs MP4 to S3; narration via **ElevenLabs** (from Lambda), not Polly.
@@ -394,7 +395,7 @@ Six founders, parallel tracks, one hard integration checkpoint at Hour 12 and a 
 | ↳ Voice agent                           | Founder 6 + Founder 3                                           | ElevenLabs agent configured with 4 tools: `resolve_group`, `recommend_restaurants`, `confirm_booking`, `place_order`. Wired into mobile app. Tool calls hit Lambda → Supabase Edge Functions.                                                                                                                                                                                                                                                                                        |
 | ↳ Recommendation engine                 | Founder 3                                                       | Edge Function that takes a group_id + context tag, builds weighted group vector, runs pgvector query, LLM re-ranks top 20 → top 3 with reasons.                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ↳ Mobile app                            | Founder 5 + Founder 2                                           | Onboarding (phone auth + required voice **or** food-select path → same embedding), home screen with big voice button, recommendation result screen, group creation from contacts. Plus visual menu screen and voice order confirmation.                                                                                                                                                                                              |
-| ↳ B2B dashboard                         | Founder 4                                                       | Login (restaurant account), home page with "Ask Crave" input, mock analytics charts (real schema, seeded data), campaign studio page skeleton. Menu management CRUD + live bookings and orders real-time display.                                                                                                                                              |
+| ↳ B2B dashboard                         | Founder 4                                                       | Login / signup (restaurant account: email + password + restaurant name → **`register_restaurant_on_signup`**), home page with "Ask Crave" input, mock analytics charts (real schema, seeded data), campaign studio page skeleton. Menu management CRUD + live bookings and orders real-time display.                                                                                                                                              |
 | ↳ Ad generation pipeline                | Founder 6 (after voice agent stable)                            | Lambda that takes a prompt + restaurant brand → Bedrock image gen → S3 upload → signed URL back. Video path: generate 4 images, Remotion Lambda + **ElevenLabs** narration → MP4 to S3.                                                                                                                                                                                                                                                                                                                                                             |
 | ↳ Receipt OCR + bill split backend      | Founder 4 (after dashboard shell is up, parallel with RLS work) | Camera flow in mobile app → S3 upload → Lambda trigger → **Bedrock vision** receipt parse (structured JSON) → Edge Function item matcher (exact → trigram → embedding) → `receipt_line_items` rows written. Split compute function (subtotal + pro-rata tax + tip). Venmo/CashApp deep-link generator.                                                                                                                                                                                                                                                                        |
 | ↳ Bill split UI + feedback piggyback    | Founder 5 (mobile) + Founder 3 (trigger)                        | Drag-and-drop item-to-avatar UI with live split totals. Tip slider. "Send" button that posts deep links to each member (SMS via Supabase Auth SMS or just in-app modal). After send, quick swipe-rate cards for each user's assigned items. Supabase trigger on `item_feedback` insert recomputes and writes the updated `pref_embedding`.                                                                                                                                                                                                           |
@@ -428,7 +429,7 @@ Show, don't tell. In the demo, open the Supabase dashboard and walk through:
 - The HNSW index on `restaurants.embedding`.
 - A live Realtime channel firing as group members vote.
 - RLS policies preventing cross-account analytics leaks.
-- Auth handling phone OTP.
+- Auth: **phone OTP** (consumer) and **email/password** for B2B signup/login ([docs/supabase.md](supabase.md#10-auth)).
 - Edge Functions doing the recommendation orchestration.
 
 This is "using Postgres + **pgvector** + **Auth** + **Realtime** + **Edge Functions** + **RLS** for load-bearing flows" — Storage is intentionally out of scope because **all binaries live on S3** ([docs/supabase.md](docs/supabase.md) §7).
@@ -466,7 +467,7 @@ This is where the (now slimmed-down) business story matters. Keep it to: problem
 - [ ] Live demo setup tested on venue Wi-Fi (or hotspot)
 - [ ] Screen recording of critical flows saved for Devpost / README
 - [ ] Pitch deck: 5 slides
-- [ ] Supabase project: pgvector enabled, pg_trgm enabled, RLS on, realtime channels configured
+- [ ] Supabase project: pgvector enabled, pg_trgm enabled, RLS on, realtime channels configured; **Auth** redirect URLs include B2B **`/auth/callback`** ([docs/client-env.md](client-env.md)); RPC **`register_restaurant_on_signup`** applied ([docs/supabase.md](supabase.md#5-extensions-and-migration-sequencing))
 - [ ] AWS: Bedrock model access approved, Lambdas deployed, S3 bucket public-read through CloudFront for demo assets, Bedrock vision OCR tested on a sample receipt (JSON validates against schema)
 - [ ] Mascot name submitted (free $25 Starbucks card, why not)
 
