@@ -7,4 +7,7 @@
 # Supabase CLI link cache (local only)
 supabase/.temp/
 
+# AWS CLI generated paths (local only)
+infra/aws/.generated/
+
 .DS_Store

@@ -2,6 +2,20 @@
 
 This tree mirrors [docs/aws.md](../../docs/aws.md). Use that document as the source of truth for deploy order, IAM, S3 layout, API Gateway routes, and verification.
 
+## One-command deploy (from repo `.env`)
+
+From the **repository root** (with AWS credentials + Supabase vars in `.env`):
+
+```bash
+./infra/aws/scripts/deploy-aws-from-env.sh
+```
+
+This runs **`bootstrap.sh`** (S3 buckets, IAM role, `infra/aws/.generated/bootstrap.env`), renders **`policies/crave-lambda-inline.template.json`** into **`CraveBedrockAndS3`**, zips and **creates/updates** Lambdas **`crave-receipt-ocr`**, **`crave-bedrock-proxy`**, **`crave-ad-generate`**, wires **S3 → receipt-ocr**, and creates/updates HTTP API **`crave-http`** with routes **`POST /voice/place-order`**, **`POST /bedrock/converse`**, **`POST /ads/generate`**. Flags: `--skip-iam`, `--skip-lambdas`, `--skip-api`, `--skip-s3`.
+
+**`.env` keys used:** `AWS_*`, optional `CRAVE_TEAM_SLUG`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, `INTERNAL_HMAC_SECRET` or `CRAVE_INTERNAL_SECRET`, `MATCH_RECEIPT_EDGE_URL`, `PLACE_ORDER_URL`, optional `RECEIPT_PARSE_MODEL_ID` (otherwise receipt OCR uses **`USE_STUB=true`**).
+
+Outputs: **`infra/aws/.generated/http-api-endpoint.txt`** (API Gateway base URL), rendered IAM + notification JSON (gitignored).
+
 ## Layout
 
 | Path | Purpose |
