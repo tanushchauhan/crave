@@ -1,4 +1,6 @@
 import type { NextConfig } from "next";
+import { config as loadDotenv } from "dotenv";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -6,6 +8,25 @@ import { fileURLToPath } from "node:url";
 // "workspace root" above this folder; Turbopack then fails with "Next.js
 // package not found" and HMR reload-loops. Pin the root to this directory.
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(projectRoot, "..");
+
+/** Same .env* precedence as Next (first listed file wins); load low → high so last wins. */
+function loadRepoRootEnv(): void {
+  const nodeEnv = process.env.NODE_ENV ?? "development";
+  const names =
+    nodeEnv === "test"
+      ? [".env.test.local", ".env.test", ".env"]
+      : nodeEnv === "production"
+        ? [".env.production.local", ".env.local", ".env.production", ".env"]
+        : [".env.development.local", ".env.local", ".env.development", ".env"];
+  for (const name of [...names].reverse()) {
+    const full = path.join(repoRoot, name);
+    if (!fs.existsSync(full)) continue;
+    loadDotenv({ path: full, override: true });
+  }
+}
+
+loadRepoRootEnv();
 
 const nextConfig: NextConfig = {
   outputFileTracingRoot: projectRoot,

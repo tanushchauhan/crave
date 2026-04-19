@@ -9,6 +9,8 @@ cd crave-app
 npm install
 ```
 
+Environment variables are read from the **monorepo root** `../.env*` (same precedence as Next.js: `.env.development.local` overrides `.env`, etc.). You do not need a separate `crave-app/.env` for shared keys.
+
 ## iOS Simulator
 
 ```bash

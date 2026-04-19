@@ -2,6 +2,8 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
+Environment variables are loaded from the **monorepo root** `../.env*` (after Next’s default `crave-b2b/.env*`, root values **override**). Put shared secrets in the repo root `.env`.
+
 First, run the development server:
 
 ```bash
