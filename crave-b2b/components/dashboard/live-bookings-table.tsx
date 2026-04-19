@@ -21,56 +21,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { DashboardShowMore } from "@/components/dashboard/dashboard-show-more";
+import type { LiveBookingTableRow } from "@/lib/dashboard/types";
 import { cn } from "@/lib/utils";
 
-const rawRows = [
-  {
-    food: "1 Pasta, 1 Pizza, 2 Salads",
-    phone: "+1 (555) 014-2201",
-    notes: "Halal, Vegetarian",
-    size: "4",
-    date: "Apr 12, 2026",
-    time: "7:30 PM",
-  },
-  {
-    food: "2 Burgers, 1 Fries",
-    phone: "+1 (555) 201-8834",
-    notes: "Extra napkins",
-    size: "3",
-    date: "Apr 12, 2026",
-    time: "6:15 PM",
-  },
-  {
-    food: "Chef's tasting menu",
-    phone: "+1 (555) 330-9910",
-    notes: "Anniversary — quiet table",
-    size: "2",
-    date: "Apr 11, 2026",
-    time: "8:00 PM",
-  },
-  {
-    food: "1 Soup, 1 Sandwich",
-    phone: "+1 (555) 772-0042",
-    notes: "Gluten-free bread",
-    size: "2",
-    date: "Apr 11, 2026",
-    time: "12:45 PM",
-  },
-  {
-    food: "Family platter + desserts",
-    phone: "+1 (555) 448-6621",
-    notes: "Kids high chair",
-    size: "6",
-    date: "Apr 10, 2026",
-    time: "5:20 PM",
-  },
-];
-
-type Row = (typeof rawRows)[number] & { defaultOrder: number };
-
-const rows: Row[] = rawRows.map((r, defaultOrder) => ({ ...r, defaultOrder }));
-
 const colCount = 6;
+
+function parsePartySize(size: string): number {
+  const n = Number.parseInt(size, 10);
+  return Number.isNaN(n) ? -1 : n;
+}
 
 function digitsOnly(s: string) {
   return s.replace(/\D/g, "");
@@ -113,10 +72,19 @@ function ariaSortValue(dir: SortDir): "ascending" | "descending" | "none" {
   return "none";
 }
 
-export function LiveBookingsTable() {
+export type LiveBookingsTableProps = {
+  rows: LiveBookingTableRow[];
+};
+
+export function LiveBookingsTable({ rows: sourceRows }: LiveBookingsTableProps) {
   const [phoneFilter, setPhoneFilter] = useState("");
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
+
+  const rows = useMemo(
+    () => sourceRows.map((r, defaultOrder) => ({ ...r, defaultOrder })),
+    [sourceRows],
+  );
 
   const displayedRows = useMemo(() => {
     const q = phoneFilter.trim();
@@ -133,8 +101,7 @@ export function LiveBookingsTable() {
       list = [...list].sort((a, b) => {
         let cmp = 0;
         if (sortKey === "size") {
-          cmp =
-            Number.parseInt(a.size, 10) - Number.parseInt(b.size, 10);
+          cmp = parsePartySize(a.size) - parsePartySize(b.size);
         } else if (sortKey === "date") {
           cmp = parseDateValue(a.date) - parseDateValue(b.date);
         } else {
@@ -147,7 +114,7 @@ export function LiveBookingsTable() {
     }
 
     return list;
-  }, [phoneFilter, sortKey, sortDir]);
+  }, [rows, phoneFilter, sortKey, sortDir]);
 
   function cycleSort(key: SortKey) {
     if (sortKey !== key) {
@@ -283,25 +250,36 @@ export function LiveBookingsTable() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {displayedRows.map((r) => (
-              <TableRow
-                key={`${r.defaultOrder}-${r.phone}`}
-                className="border-brand/15 text-dark hover:bg-light/60"
-              >
-                <TableCell className="max-w-[200px] whitespace-normal text-sm text-dark">
-                  {r.food}
+            {displayedRows.length === 0 ? (
+              <TableRow className="border-brand/15 hover:bg-transparent">
+                <TableCell
+                  colSpan={colCount}
+                  className="py-10 text-center text-sm text-gray-dark"
+                >
+                  No bookings or orders yet for this restaurant.
                 </TableCell>
-                <TableCell className="text-sm text-dark">{r.phone}</TableCell>
-                <TableCell className="max-w-[160px] whitespace-normal text-sm text-gray-dark">
-                  {r.notes}
-                </TableCell>
-                <TableCell className="text-sm font-medium text-dark">
-                  {r.size}
-                </TableCell>
-                <TableCell className="text-sm text-gray-dark">{r.date}</TableCell>
-                <TableCell className="text-sm text-gray-dark">{r.time}</TableCell>
               </TableRow>
-            ))}
+            ) : (
+              displayedRows.map((r) => (
+                <TableRow
+                  key={r.id}
+                  className="border-brand/15 text-dark hover:bg-light/60"
+                >
+                  <TableCell className="max-w-[200px] whitespace-normal text-sm text-dark">
+                    {r.food}
+                  </TableCell>
+                  <TableCell className="text-sm text-dark">{r.phone}</TableCell>
+                  <TableCell className="max-w-[160px] whitespace-normal text-sm text-gray-dark">
+                    {r.notes}
+                  </TableCell>
+                  <TableCell className="text-sm font-medium text-dark">
+                    {r.size}
+                  </TableCell>
+                  <TableCell className="text-sm text-gray-dark">{r.date}</TableCell>
+                  <TableCell className="text-sm text-gray-dark">{r.time}</TableCell>
+                </TableRow>
+              ))
+            )}
           </TableBody>
           <TableFooter className="border-0 bg-transparent p-0 hover:bg-transparent">
             <TableRow className="border-0 hover:bg-transparent">

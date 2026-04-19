@@ -23,19 +23,8 @@ import {
 } from "@/components/ui/table";
 import { DashboardShowMore } from "@/components/dashboard/dashboard-show-more";
 import { MiniTrendSparkline } from "@/components/dashboard/mini-trend-sparkline";
+import type { MenuPerformanceTableRow } from "@/lib/dashboard/types";
 import { cn } from "@/lib/utils";
-
-const rawRows = [
-  { item: "Pizza", rate: "15%", up: true, upCount: 42, downCount: 3 },
-  { item: "Pasta", rate: "15%", up: false, upCount: 28, downCount: 5 },
-  { item: "Burger", rate: "15%", up: true, upCount: 35, downCount: 4 },
-  { item: "Salad", rate: "15%", up: true, upCount: 19, downCount: 2 },
-  { item: "Soup", rate: "15%", up: false, upCount: 12, downCount: 6 },
-];
-
-type Row = (typeof rawRows)[number] & { defaultOrder: number };
-
-const rows: Row[] = rawRows.map((r, defaultOrder) => ({ ...r, defaultOrder }));
 
 const colCount = 5;
 
@@ -65,10 +54,19 @@ function ariaSortValue(dir: SortDir): "ascending" | "descending" | "none" {
   return "none";
 }
 
-export function MenuPerformanceTable() {
+export type MenuPerformanceTableProps = {
+  rows: MenuPerformanceTableRow[];
+};
+
+export function MenuPerformanceTable({ rows: sourceRows }: MenuPerformanceTableProps) {
   const [foodFilter, setFoodFilter] = useState("");
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
+
+  const rows = useMemo(
+    () => sourceRows.map((r, defaultOrder) => ({ ...r, defaultOrder })),
+    [sourceRows],
+  );
 
   const displayedRows = useMemo(() => {
     const q = foodFilter.trim().toLowerCase();
@@ -94,7 +92,7 @@ export function MenuPerformanceTable() {
     }
 
     return list;
-  }, [foodFilter, sortKey, sortDir]);
+  }, [rows, foodFilter, sortKey, sortDir]);
 
   function cycleSort(key: SortKey) {
     if (sortKey !== key) {
@@ -220,24 +218,35 @@ export function MenuPerformanceTable() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {displayedRows.map((r) => (
-              <TableRow
-                key={r.defaultOrder}
-                className="border-brand/15 hover:bg-light/60"
-              >
-                <TableCell className="font-medium text-dark">{r.item}</TableCell>
-                <TableCell className="text-sm text-gray-dark">{r.rate}</TableCell>
-                <TableCell className="text-center text-sm text-gray-dark">
-                  {r.upCount}
-                </TableCell>
-                <TableCell className="text-center text-sm text-gray-dark">
-                  {r.downCount}
-                </TableCell>
-                <TableCell>
-                  <MiniTrendSparkline up={r.up} />
+            {displayedRows.length === 0 ? (
+              <TableRow className="border-brand/15 hover:bg-transparent">
+                <TableCell
+                  colSpan={colCount}
+                  className="py-10 text-center text-sm text-gray-dark"
+                >
+                  No menu items yet, or performance data is still loading.
                 </TableCell>
               </TableRow>
-            ))}
+            ) : (
+              displayedRows.map((r) => (
+                <TableRow
+                  key={r.id}
+                  className="border-brand/15 hover:bg-light/60"
+                >
+                  <TableCell className="font-medium text-dark">{r.item}</TableCell>
+                  <TableCell className="text-sm text-gray-dark">{r.rate}</TableCell>
+                  <TableCell className="text-center text-sm text-gray-dark">
+                    {r.upCount}
+                  </TableCell>
+                  <TableCell className="text-center text-sm text-gray-dark">
+                    {r.downCount}
+                  </TableCell>
+                  <TableCell>
+                    <MiniTrendSparkline up={r.up} />
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
           </TableBody>
           <TableFooter className="border-0 bg-transparent p-0 hover:bg-transparent">
             <TableRow className="border-0 hover:bg-transparent">
