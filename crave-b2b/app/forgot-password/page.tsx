@@ -1,12 +1,12 @@
 import { Suspense } from "react";
 import { AuthSplitShell } from "@/components/auth/auth-split-shell";
-import { LoginForm } from "@/components/login/login-form";
+import { ForgotPasswordForm } from "@/components/login/forgot-password-form";
 
-export default function LoginPage() {
+export default function ForgotPasswordPage() {
   return (
     <AuthSplitShell>
       <Suspense fallback={<p className="text-dark">Loading…</p>}>
-        <LoginForm />
+        <ForgotPasswordForm />
       </Suspense>
     </AuthSplitShell>
   );

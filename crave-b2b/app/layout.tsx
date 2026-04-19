@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Josefin_Sans } from "next/font/google";
-import { ConditionalSiteNavbar } from "@/components/layout/conditional-site-navbar";
+import { SiteNavbar } from "@/components/layout/site-navbar";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -34,7 +34,7 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} ${josefinSans.className} h-full antialiased`}
     >
       <body className="flex min-h-svh flex-col font-sans">
-        <ConditionalSiteNavbar />
+        <SiteNavbar />
         {children}
       </body>
     </html>
