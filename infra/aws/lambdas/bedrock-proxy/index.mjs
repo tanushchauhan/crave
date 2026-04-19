@@ -45,6 +45,20 @@ function response(statusCode, bodyObj, extraHeaders = {}) {
   };
 }
 
+/** ElevenLabs Custom LLM requires SSE (text/event-stream), not a single JSON body. */
+function responseSse(sseBody, extraHeaders = {}) {
+  return {
+    statusCode: 200,
+    headers: {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache",
+      ...cors,
+      ...extraHeaders,
+    },
+    body: sseBody,
+  };
+}
+
 function rawBodyFromEvent(event) {
   if (typeof event.body !== "string") return "{}";
   return event.isBase64Encoded
@@ -93,7 +107,6 @@ function openAiMessagesToBedrock(body) {
   if (body.tools && Array.isArray(body.tools) && body.tools.length > 0) {
     return { error: "tools_not_supported", message: "Use client tools for CRAVE; OpenAI shim is text-only." };
   }
-  // ElevenLabs Custom LLM often sends stream:true; we still return a non-SSE JSON chat.completion (no token streaming).
   const system =
     systemParts.length > 0 ? [{ text: systemParts.join("\n\n") }] : undefined;
 
@@ -134,9 +147,56 @@ function mapOpenAiFinishReason(stopReason) {
 function bedrockAssistantText(output) {
   const blocks = output?.message?.content;
   if (!Array.isArray(blocks)) return "";
-  return blocks
-    .map((b) => (b && typeof b.text === "string" ? b.text : ""))
-    .join("");
+  const parts = [];
+  for (const b of blocks) {
+    if (!b) continue;
+    if (typeof b.text === "string") parts.push(b.text);
+    const rt = b.reasoningContent?.reasoningText?.text;
+    if (typeof rt === "string") parts.push(rt);
+  }
+  return parts.join("");
+}
+
+/** OpenAI-compatible SSE for chat.completions (ElevenLabs Custom LLM). */
+function sseOpenAiChatCompletion({
+  id,
+  created,
+  model,
+  text,
+  finishReason,
+  usage,
+}) {
+  const base = { id, object: "chat.completion.chunk", created, model };
+  const lines = [];
+  lines.push(
+    `data: ${JSON.stringify({
+      ...base,
+      choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }],
+    })}\n\n`,
+  );
+  lines.push(
+    `data: ${JSON.stringify({
+      ...base,
+      choices: [
+        {
+          index: 0,
+          delta: { content: text == null ? "" : String(text) },
+          finish_reason: null,
+        },
+      ],
+    })}\n\n`,
+  );
+  lines.push(
+    `data: ${JSON.stringify({
+      ...base,
+      choices: [
+        { index: 0, delta: {}, finish_reason: finishReason || "stop" },
+      ],
+      ...(usage ? { usage } : {}),
+    })}\n\n`,
+  );
+  lines.push("data: [DONE]\n\n");
+  return lines.join("");
 }
 
 async function forwardToSupabaseEdge(targetUrl, anonKey, authHeader, event) {
@@ -266,25 +326,41 @@ export const handler = async (event) => {
     const completionTokens = u.outputTokens ?? 0;
     const totalTokens =
       u.totalTokens ?? promptTokens + completionTokens;
+    const usage = {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: totalTokens,
+    };
+    const finishReason = mapOpenAiFinishReason(out.stopReason);
 
-    return response(200, {
-      id,
-      object: "chat.completion",
-      created,
-      model: modelEcho,
-      choices: [
-        {
-          index: 0,
-          message: { role: "assistant", content: text },
-          finish_reason: mapOpenAiFinishReason(out.stopReason),
-        },
-      ],
-      usage: {
-        prompt_tokens: promptTokens,
-        completion_tokens: completionTokens,
-        total_tokens: totalTokens,
-      },
-    });
+    // ElevenLabs Custom LLM: docs require SSE (text/event-stream), not application/json.
+    if (body.stream === false) {
+      return response(200, {
+        id,
+        object: "chat.completion",
+        created,
+        model: modelEcho,
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: text },
+            finish_reason: finishReason,
+          },
+        ],
+        usage,
+      });
+    }
+
+    return responseSse(
+      sseOpenAiChatCompletion({
+        id,
+        created,
+        model: modelEcho,
+        text,
+        finishReason,
+        usage,
+      }),
+    );
   }
 
   if (path.endsWith("/bedrock/converse") || path.includes("bedrock/converse")) {
