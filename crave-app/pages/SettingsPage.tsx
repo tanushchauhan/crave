@@ -5,16 +5,21 @@ import MainAppPageHeader from "@/components/MainAppPageHeader";
 import RipplePressable from "@/components/RipplePressable";
 import VoiceAssistantFab from "@/components/VoiceAssistantFab";
 import { useUserSettings } from "@/context/UserSettingsContext";
+import { supabase } from "@/lib/supabase";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import * as ImagePicker from "expo-image-picker";
-import { Bell, Camera, MapPin, Mic } from "lucide-react-native";
-import { useCallback } from "react";
+import { router } from "expo-router";
+import { Bell, Camera, LogOut, MapPin, Mic, Settings } from "lucide-react-native";
+import { useCallback, useEffect, useState } from "react";
 import {
+    ActivityIndicator,
+    Alert,
     Image,
     ScrollView,
     Switch,
     Text,
     TextInput,
+    TouchableOpacity,
     View,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -29,6 +34,22 @@ type SettingsPageProps = {
     onVoicePress?: () => void;
 };
 
+function accountLabelFromUser(user: {
+    phone?: string | null;
+    email?: string | null;
+} | null): string {
+    if (!user) {
+        return "Not signed in";
+    }
+    if (user.phone) {
+        return user.phone;
+    }
+    if (user.email) {
+        return user.email;
+    }
+    return "Signed in";
+}
+
 export default function SettingsPage({
     activeTab,
     onTabChange,
@@ -37,6 +58,62 @@ export default function SettingsPage({
     const insets = useSafeAreaInsets();
     const navHeight = 72;
     const { settings, updateSettings } = useUserSettings();
+    const [accountLabel, setAccountLabel] = useState<string>("");
+    const [signingOut, setSigningOut] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        void (async () => {
+            const { data } = await supabase.auth.getUser();
+            if (!cancelled) {
+                setAccountLabel(accountLabelFromUser(data.user));
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    const confirmSignOut = useCallback(() => {
+        Alert.alert(
+            "Log out",
+            "You will need to sign in again to use Crave.",
+            [
+                { text: "Cancel", style: "cancel" },
+                {
+                    text: "Log out",
+                    style: "destructive",
+                    onPress: () => {
+                        void (async () => {
+                            setSigningOut(true);
+                            try {
+                                const { error } = await supabase.auth.signOut();
+                                if (error) {
+                                    Alert.alert("Could not log out", error.message);
+                                    return;
+                                }
+                                // Wait until local session is gone so index does not route to "setup" (FinishSetupHome).
+                                for (let i = 0; i < 40; i++) {
+                                    const { data } = await supabase.auth.getSession();
+                                    if (!data.session) {
+                                        break;
+                                    }
+                                    await new Promise((r) => setTimeout(r, 50));
+                                }
+                                router.replace("/");
+                            } catch (e: unknown) {
+                                const msg =
+                                    e instanceof Error ? e.message : "Something went wrong";
+                                Alert.alert("Could not log out", msg);
+                            } finally {
+                                setSigningOut(false);
+                            }
+                        })();
+                    },
+                },
+            ],
+        );
+    }, []);
 
     const pickAvatar = useCallback(async () => {
         if (!settings.cameraEnabled) return;
@@ -68,8 +145,43 @@ export default function SettingsPage({
             >
                 <MainAppPageHeader
                     title="Settings"
-                    subtitle="Profile, Maple's notes, and what Crave can use on your device."
+                    icon={
+                        <View className="h-9 w-9 items-center justify-center rounded-full bg-[#fff3e7]">
+                            <Settings size={22} color={ORANGE} strokeWidth={2.2} />
+                        </View>
+                    }
+                    subtitle="Profile, Maple's notes, account, and what Crave can use on your device."
                 />
+
+                <Text className="mt-6 font-josefin-bold text-[13px] text-[#444]">
+                    Account
+                </Text>
+                <View className="mt-2 overflow-hidden rounded-2xl bg-white px-4 py-4 shadow-sm shadow-black/5">
+                    <Text className="font-josefin text-[11px] uppercase tracking-wide text-[#888]">
+                        Signed in as
+                    </Text>
+                    <Text
+                        className="mt-1 font-josefin-bold text-[15px] text-[#2c2c2c]"
+                        numberOfLines={2}
+                    >
+                        {accountLabel || "…"}
+                    </Text>
+                    <TouchableOpacity
+                        activeOpacity={0.88}
+                        disabled={signingOut}
+                        onPress={confirmSignOut}
+                        className="mt-4 flex-row items-center justify-center gap-2 rounded-xl border border-[#f5861f]/40 bg-[#fff8f2] py-3.5"
+                    >
+                        {signingOut ? (
+                            <ActivityIndicator size="small" color={ORANGE} />
+                        ) : (
+                            <LogOut size={18} color={ORANGE} strokeWidth={2.2} />
+                        )}
+                        <Text className="font-josefin-bold text-[13px]" style={{ color: ORANGE }}>
+                            {signingOut ? "Signing out…" : "Log out"}
+                        </Text>
+                    </TouchableOpacity>
+                </View>
 
                 <Text className="mt-6 font-josefin-bold text-[13px] text-[#444]">
                     Profile
@@ -98,8 +210,8 @@ export default function SettingsPage({
                             Profile photo
                         </Text>
                         <Text className="mt-1 font-josefin text-[11px] text-[#888]">
-                            Tap to choose from your library. Requires Camera &amp; Photos
-                            access to be enabled below.
+                            Tap to choose from your library. Requires Camera and Photos access
+                            to be enabled below.
                         </Text>
                     </View>
                 </View>
@@ -122,7 +234,7 @@ export default function SettingsPage({
                 />
 
                 <Text className="mt-6 font-josefin-bold text-[13px] text-[#444]">
-                    Services &amp; permissions
+                    Services and permissions
                 </Text>
                 <View className="mt-2 overflow-hidden rounded-2xl bg-white shadow-sm shadow-black/5">
                     <ServiceRow
@@ -134,7 +246,7 @@ export default function SettingsPage({
                     />
                     <ServiceRow
                         icon={Camera}
-                        title="Camera &amp; library"
+                        title="Camera and library"
                         subtitle="Profile photo and receipt uploads"
                         value={settings.cameraEnabled}
                         onValueChange={(v) => updateSettings({ cameraEnabled: v })}

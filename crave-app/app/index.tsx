@@ -3,8 +3,9 @@ import OnboardingFlow from "@/pages/OnboardingFlow";
 import { logAuthSession } from "@/lib/authDebug";
 import { supabase } from "@/lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useFocusEffect } from "@react-navigation/native";
 import { Redirect } from "expo-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, View } from "react-native";
 
 const SETUP_KEY = "crave.setup.complete";
@@ -24,47 +25,66 @@ function resolveStage(session: boolean, setupComplete: boolean): Exclude<Stage, 
 export default function Index() {
     const [ready, setReady] = useState(false);
     const [stage, setStage] = useState<Stage>("loading");
+    /** Remount OnboardingFlow when returning from tabs/setup so step 0 (welcome + tip) shows again. */
+    const [onboardingRemountKey, setOnboardingRemountKey] = useState(0);
+    const prevStageRef = useRef<Stage | null>(null);
+
+    /** Re-read session whenever this screen is shown (e.g. after `router.replace("/")` from Log out). */
+    useFocusEffect(
+        useCallback(() => {
+            let cancelled = false;
+
+            void (async () => {
+                const [{ data }, setupRaw] = await Promise.all([
+                    supabase.auth.getSession(),
+                    AsyncStorage.getItem(SETUP_KEY),
+                ]);
+                if (cancelled) {
+                    return;
+                }
+                if (data.session) {
+                    logAuthSession("getSession (focused)", data.session);
+                }
+                const setupComplete = setupRaw === "1";
+                setStage(resolveStage(!!data.session, setupComplete));
+                setReady(true);
+            })();
+
+            return () => {
+                cancelled = true;
+            };
+        }, []),
+    );
 
     useEffect(() => {
-        let cancelled = false;
-
-        const applyRouting = (session: boolean, setupRaw: string | null) => {
-            if (cancelled) {
-                return;
-            }
+        const applyFromAuth = (session: boolean, setupRaw: string | null) => {
             const setupComplete = setupRaw === "1";
             setStage(resolveStage(session, setupComplete));
         };
-
-        const init = async () => {
-            const [{ data }, setupRaw] = await Promise.all([
-                supabase.auth.getSession(),
-                AsyncStorage.getItem(SETUP_KEY),
-            ]);
-            if (data.session) {
-                logAuthSession("getSession (restored)", data.session);
-            }
-            applyRouting(!!data.session, setupRaw);
-            if (!cancelled) {
-                setReady(true);
-            }
-        };
-
-        void init();
 
         const {
             data: { subscription },
         } = supabase.auth.onAuthStateChange((_event, session) => {
             void AsyncStorage.getItem(SETUP_KEY).then((setupRaw) => {
-                applyRouting(!!session, setupRaw);
+                applyFromAuth(!!session, setupRaw);
             });
         });
 
         return () => {
-            cancelled = true;
             subscription.unsubscribe();
         };
     }, []);
+
+    useEffect(() => {
+        const prev = prevStageRef.current;
+        prevStageRef.current = stage;
+        if (
+            stage === "onboarding" &&
+            (prev === "done" || prev === "setup")
+        ) {
+            setOnboardingRemountKey((k) => k + 1);
+        }
+    }, [stage]);
 
     if (!ready || stage === "loading") {
         return (
@@ -89,5 +109,10 @@ export default function Index() {
         );
     }
 
-    return <OnboardingFlow onComplete={() => setStage("setup")} />;
+    return (
+        <OnboardingFlow
+            key={onboardingRemountKey}
+            onComplete={() => setStage("setup")}
+        />
+    );
 }
