@@ -176,11 +176,6 @@ export default function GroupsPage({
         setSettingsDetailGroupId(null);
     }, []);
 
-    const expandWithSettings = useCallback((id: string) => {
-        setExpandedId(id);
-        setSettingsDetailGroupId(id);
-    }, []);
-
     const toggleSettingsDetail = useCallback((id: string) => {
         setSettingsDetailGroupId((cur) => (cur === id ? null : id));
     }, []);
@@ -314,9 +309,6 @@ export default function GroupsPage({
                                 isCurrent={currentGroupId === group.id}
                                 settingsDetailOpen={settingsDetailGroupId === group.id}
                                 onToggleExpand={() => toggleExpand(group.id)}
-                                onPressCollapsedSettings={() =>
-                                    expandWithSettings(group.id)
-                                }
                                 onToggleSettingsDetail={() =>
                                     toggleSettingsDetail(group.id)
                                 }
@@ -456,7 +448,6 @@ type GroupCardProps = {
     isCurrent: boolean;
     settingsDetailOpen: boolean;
     onToggleExpand: () => void;
-    onPressCollapsedSettings: () => void;
     onToggleSettingsDetail: () => void;
     onSetCurrent: () => void;
     onPressAddMember: () => void;
@@ -474,7 +465,6 @@ function GroupCard({
     isCurrent,
     settingsDetailOpen,
     onToggleExpand,
-    onPressCollapsedSettings,
     onToggleSettingsDetail,
     onSetCurrent,
     onPressAddMember,
@@ -543,20 +533,12 @@ function GroupCard({
                 className="overflow-hidden rounded-2xl"
                 style={{ backgroundColor: CARD_BG }}
             >
-                {isCurrent ? (
-                    <View className="absolute right-2 top-2 z-10 flex-row items-center gap-1 rounded-full bg-[#2d7a3e] px-2 py-0.5">
-                        <FontAwesome name="check" size={9} color="#fff" />
-                        <Text className="font-josefin-bold text-[9px] text-white">
-                            Current
-                        </Text>
-                    </View>
-                ) : null}
-                <View className="flex-row items-start justify-between px-3 py-3 pr-14">
+                <View className="flex-row items-start justify-between gap-2 px-3 pb-2 pt-3.5">
                     <TouchableOpacity
                         onPress={editingName ? undefined : onToggleExpand}
                         disabled={editingName}
                         activeOpacity={0.92}
-                        className="min-w-0 flex-1 pr-2"
+                        className="min-w-0 flex-1"
                     >
                         {editingName ? (
                             <TextInput
@@ -569,21 +551,34 @@ function GroupCard({
                                 placeholderTextColor="rgba(255,255,255,0.45)"
                             />
                         ) : (
-                            <Text className="font-josefin-bold text-[15px] text-white">
+                            <Text
+                                className="font-josefin-bold text-[15px] text-white"
+                                numberOfLines={2}
+                            >
                                 {group.name}
                             </Text>
                         )}
                     </TouchableOpacity>
-                    <TouchableOpacity
-                        onPress={togglePencil}
-                        hitSlop={10}
-                        className="pt-0.5"
-                        accessibilityLabel={
-                            editingName ? "Save group name" : "Edit group name"
-                        }
-                    >
-                        <Pencil size={14} color="#ffffff" strokeWidth={2} />
-                    </TouchableOpacity>
+                    <View className="shrink-0 flex-row items-center gap-2">
+                        {isCurrent ? (
+                            <View className="flex-row items-center gap-1 rounded-full bg-[#2d7a3e] px-2 py-0.5">
+                                <FontAwesome name="check" size={9} color="#fff" />
+                                <Text className="font-josefin-bold text-[9px] text-white">
+                                    Current
+                                </Text>
+                            </View>
+                        ) : null}
+                        <TouchableOpacity
+                            onPress={togglePencil}
+                            hitSlop={10}
+                            className="pt-0.5"
+                            accessibilityLabel={
+                                editingName ? "Save group name" : "Edit group name"
+                            }
+                        >
+                            <Pencil size={14} color="#ffffff" strokeWidth={2} />
+                        </TouchableOpacity>
+                    </View>
                 </View>
                 <View className="flex-row items-center justify-between px-3 pb-3">
                     <View className="flex-row items-center">
@@ -593,11 +588,6 @@ function GroupCard({
                         </Text>
                     </View>
                     <View className="flex-row items-center gap-1.5">
-                        <MiniIconButton
-                            icon="cog"
-                            label="Settings"
-                            onPress={onPressCollapsedSettings}
-                        />
                         <MiniOrangeButton
                             icon="user-plus"
                             label="Add Member"
@@ -617,36 +607,61 @@ function GroupCard({
 
     return (
         <View className="overflow-hidden rounded-2xl" style={{ backgroundColor: CARD_BG }}>
-            <View className="px-3 pt-3">
-                <View className="flex-row items-start justify-between">
-                    <View className="min-w-0 flex-1 flex-row items-start gap-1 pr-2">
-                        {editingName ? (
-                            <TextInput
-                                value={draftName}
-                                onChangeText={setDraftName}
-                                onBlur={commitName}
-                                multiline
-                                autoFocus
-                                className="min-h-[40px] flex-1 font-josefin-bold text-[15px] text-white"
-                                placeholderTextColor="rgba(255,255,255,0.45)"
-                            />
-                        ) : (
-                            <Text className="flex-1 font-josefin-bold text-[15px] text-white">
-                                {group.name}
-                            </Text>
-                        )}
-                        <TouchableOpacity
-                            onPress={togglePencil}
-                            hitSlop={10}
-                            className="pt-0.5"
-                            accessibilityLabel={
-                                editingName ? "Save group name" : "Edit group name"
-                            }
-                        >
-                            <Pencil size={14} color="#ffffff" strokeWidth={2} />
-                        </TouchableOpacity>
+            <View className="px-3 pt-4">
+                {/* Title + tags stack on the left so tags sit tight under the name; avatars stay top-right */}
+                <View className="flex-row items-start justify-between gap-2">
+                    <View className="min-w-0 flex-1">
+                        <View className="flex-row items-start gap-1">
+                            {editingName ? (
+                                <TextInput
+                                    value={draftName}
+                                    onChangeText={setDraftName}
+                                    onBlur={commitName}
+                                    multiline
+                                    autoFocus
+                                    className="min-h-[40px] flex-1 font-josefin-bold text-[15px] text-white"
+                                    placeholderTextColor="rgba(255,255,255,0.45)"
+                                />
+                            ) : (
+                                <TouchableOpacity
+                                    onPress={onToggleExpand}
+                                    activeOpacity={0.88}
+                                    className="min-w-0 flex-1"
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Collapse group"
+                                >
+                                    <Text className="font-josefin-bold text-[15px] text-white">
+                                        {group.name}
+                                    </Text>
+                                </TouchableOpacity>
+                            )}
+                            <TouchableOpacity
+                                onPress={togglePencil}
+                                hitSlop={10}
+                                className="pt-0.5"
+                                accessibilityLabel={
+                                    editingName ? "Save group name" : "Edit group name"
+                                }
+                            >
+                                <Pencil size={14} color="#ffffff" strokeWidth={2} />
+                            </TouchableOpacity>
+                        </View>
+                        {(group.tags?.length ?? 0) > 0 ? (
+                            <View className="mt-1.5 flex-row flex-wrap gap-1">
+                                {group.tags!.map((t) => (
+                                    <View
+                                        key={t}
+                                        className="rounded-full bg-white/15 px-2 py-0.5"
+                                    >
+                                        <Text className="font-josefin text-[9px] text-white/90">
+                                            {t}
+                                        </Text>
+                                    </View>
+                                ))}
+                            </View>
+                        ) : null}
                     </View>
-                    <View className="flex-row items-center">
+                    <View className="shrink-0 flex-row items-center pt-0.5">
                         <AvatarStack colors={group.avatarColors} />
                         <Text className="ml-1 font-josefin-bold text-[13px] text-[#f5f5f5]">
                             {membersLabel}
@@ -654,27 +669,7 @@ function GroupCard({
                     </View>
                 </View>
 
-                {(group.tags?.length ?? 0) > 0 ? (
-                    <View className="mt-2 flex-row flex-wrap gap-1">
-                        {group.tags!.map((t) => (
-                            <View
-                                key={t}
-                                className="rounded-full bg-white/15 px-2 py-0.5"
-                            >
-                                <Text className="font-josefin text-[9px] text-white/90">
-                                    {t}
-                                </Text>
-                            </View>
-                        ))}
-                    </View>
-                ) : null}
-
                 <View className="mt-3 flex-row flex-wrap justify-end gap-1.5">
-                    <MiniIconButton
-                        icon="cog"
-                        label="Settings"
-                        onPress={onToggleSettingsDetail}
-                    />
                     <MiniOrangeButton
                         icon="user-plus"
                         label="Add Member"
@@ -687,19 +682,6 @@ function GroupCard({
                         onPress={onSetCurrent}
                     />
                 </View>
-
-                {settingsDetailOpen ? (
-                    <View className="mt-3 rounded-xl border border-white/20 bg-[#4a4a4a] px-3 py-2.5">
-                        <Text className="font-josefin-bold text-[11px] text-white/90">
-                            Quick settings
-                        </Text>
-                        <Text className="mt-1 font-josefin text-[10px] leading-[14px] text-white/70">
-                            Notifications, visibility, and invite link for{" "}
-                            <Text className="font-josefin-bold text-white">{group.name}</Text>{" "}
-                            can be wired here.
-                        </Text>
-                    </View>
-                ) : null}
 
                 <Text className="mt-4 font-josefin-bold text-[10px] text-white">
                     Description (Used For AI Preferencing)
@@ -738,6 +720,19 @@ function GroupCard({
                             ))}
                         </View>
                     </>
+                ) : null}
+
+                {settingsDetailOpen ? (
+                    <View className="mt-4 rounded-xl border border-white/20 bg-[#4a4a4a] px-3 py-2.5">
+                        <Text className="font-josefin-bold text-[11px] text-white/90">
+                            Quick settings
+                        </Text>
+                        <Text className="mt-1 font-josefin text-[10px] leading-[14px] text-white/70">
+                            Notifications, visibility, and invite link for{" "}
+                            <Text className="font-josefin-bold text-white">{group.name}</Text>{" "}
+                            can be wired here.
+                        </Text>
+                    </View>
                 ) : null}
 
                 <View className="mt-4 flex-row justify-end pb-2">
@@ -827,30 +822,6 @@ function AvatarStack({ colors }: { colors: string[] }) {
                 />
             ))}
         </View>
-    );
-}
-
-function MiniIconButton({
-    icon,
-    label,
-    onPress,
-}: {
-    icon: string;
-    label: string;
-    onPress?: () => void;
-}) {
-    return (
-        <TouchableOpacity onPress={onPress} className="items-center" activeOpacity={0.85}>
-            <View className="h-9 w-9 items-center justify-center rounded-lg bg-[#3a3a3a]">
-                <FontAwesome5 name={icon as "cog"} size={13} color="#fff" solid />
-            </View>
-            <Text
-                className="mt-0.5 font-josefin-bold text-[8px] text-white"
-                numberOfLines={1}
-            >
-                {label}
-            </Text>
-        </TouchableOpacity>
     );
 }
 

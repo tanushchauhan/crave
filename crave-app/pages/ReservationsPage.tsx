@@ -9,9 +9,11 @@ import { useGroupsSession } from "@/context/GroupsSessionContext";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { pickReceiptDocument } from "@/lib/pickReceipt";
 import { Pencil, Search, Settings } from "lucide-react-native";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
     Image,
+    Modal,
+    Pressable,
     ScrollView,
     Text,
     TextInput,
@@ -32,13 +34,68 @@ type ReservationsPageProps = {
     onVoicePress?: () => void;
 };
 
-type CardKey = "top" | "bottom" | null;
-
 type ReceiptAttachment = {
     uri: string;
     name: string;
     mimeType?: string | null;
 };
+
+type ReservationRow = {
+    id: string;
+    venue: string;
+    extraMembers: string;
+    reservationAt: Date;
+};
+
+type ResSortKey = "latest" | "oldest" | "venue-asc" | "venue-desc";
+
+const RES_SORT_LABELS: Record<ResSortKey, string> = {
+    latest: "Latest",
+    oldest: "Oldest",
+    "venue-asc": "Venue (A–Z)",
+    "venue-desc": "Venue (Z–A)",
+};
+
+type ResFilterId = "all" | "upcoming" | "past";
+
+const RES_FILTER_LABELS: Record<ResFilterId, string> = {
+    all: "All",
+    upcoming: "Upcoming",
+    past: "Past",
+};
+
+/** Mock reservations — replace with API data. */
+const MOCK_RESERVATIONS: ReservationRow[] = [
+    {
+        id: "r1",
+        venue: "Capital Day Grill",
+        extraMembers: "+ 3...",
+        // Past (before “now” in normal use — fixed date in the past)
+        reservationAt: new Date(2024, 3, 16, 19, 30, 0),
+    },
+    {
+        id: "r2",
+        venue: "Capital Day Grill",
+        extraMembers: "+ 3...",
+        reservationAt: new Date(2026, 5, 18, 19, 30, 0),
+    },
+];
+
+function formatReservationLabel(d: Date): string {
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yy = String(d.getFullYear()).slice(-2);
+    let hours = d.getHours();
+    const minutes = String(d.getMinutes()).padStart(2, "0");
+    const ampm = hours >= 12 ? "PM" : "AM";
+    hours = hours % 12;
+    if (hours === 0) hours = 12;
+    return `${dd}/${mm}/${yy} ${String(hours).padStart(2, "0")}:${minutes} ${ampm}`;
+}
+
+function isReservationPast(at: Date): boolean {
+    return at.getTime() < Date.now();
+}
 
 export default function ReservationsPage({
     activeTab,
@@ -49,13 +106,52 @@ export default function ReservationsPage({
     const navHeight = 72;
     const { currentGroup } = useGroupsSession();
     const [search, setSearch] = useState("");
-    const [expanded, setExpanded] = useState<CardKey>("bottom");
-
-    const toggle = useCallback((key: Exclude<CardKey, null>) => {
-        setExpanded((cur) => (cur === key ? null : key));
-    }, []);
+    const [expandedId, setExpandedId] = useState<string | null>(null);
+    const [sortKey, setSortKey] = useState<ResSortKey>("latest");
+    const [filterId, setFilterId] = useState<ResFilterId>("all");
+    const [sortMenuOpen, setSortMenuOpen] = useState(false);
+    const [filterMenuOpen, setFilterMenuOpen] = useState(false);
 
     const currentLabel = currentGroup?.name ?? "No group";
+
+    const toggleExpand = useCallback((id: string) => {
+        setExpandedId((cur) => (cur === id ? null : id));
+    }, []);
+
+    const filtered = useMemo(() => {
+        let list = MOCK_RESERVATIONS.filter((r) =>
+            r.venue.toLowerCase().includes(search.trim().toLowerCase()),
+        );
+        if (filterId === "upcoming") {
+            list = list.filter((r) => !isReservationPast(r.reservationAt));
+        } else if (filterId === "past") {
+            list = list.filter((r) => isReservationPast(r.reservationAt));
+        }
+        return list;
+    }, [search, filterId]);
+
+    const visibleReservations = useMemo(() => {
+        const list = [...filtered];
+        if (sortKey === "latest") {
+            return list.sort(
+                (a, b) => b.reservationAt.getTime() - a.reservationAt.getTime(),
+            );
+        }
+        if (sortKey === "oldest") {
+            return list.sort(
+                (a, b) => a.reservationAt.getTime() - b.reservationAt.getTime(),
+            );
+        }
+        if (sortKey === "venue-asc") {
+            return list.sort((a, b) => a.venue.localeCompare(b.venue));
+        }
+        if (sortKey === "venue-desc") {
+            return list.sort((a, b) => b.venue.localeCompare(a.venue));
+        }
+        return list;
+    }, [filtered, sortKey]);
+
+    const filterLabel = RES_FILTER_LABELS[filterId];
 
     return (
         <SafeAreaView
@@ -102,35 +198,55 @@ export default function ReservationsPage({
                 </TouchableOpacity>
 
                 <View className="mt-3 flex-row flex-wrap gap-2">
-                    <View className="rounded-full border border-white bg-white px-3 py-1.5">
-                        <Text className="font-josefin-bold text-[11px]" style={{ color: MUTED }}>
-                            Sort By: Latest
+                    <TouchableOpacity
+                        onPress={() => setSortMenuOpen(true)}
+                        activeOpacity={0.88}
+                        className="rounded-full border border-white bg-white px-3 py-1.5"
+                    >
+                        <Text
+                            className="font-josefin-bold text-[11px]"
+                            style={{ color: MUTED }}
+                        >
+                            Sort By: {RES_SORT_LABELS[sortKey]}
                         </Text>
-                    </View>
-                    <View className="rounded-full border border-white bg-white px-3 py-1.5">
-                        <Text className="font-josefin-bold text-[11px]" style={{ color: MUTED }}>
-                            Filter By: None
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        onPress={() => setFilterMenuOpen(true)}
+                        activeOpacity={0.88}
+                        className="rounded-full border border-white bg-white px-3 py-1.5"
+                    >
+                        <Text
+                            className="font-josefin-bold text-[11px]"
+                            style={{ color: MUTED }}
+                        >
+                            Filter: {filterLabel}
                         </Text>
-                    </View>
+                    </TouchableOpacity>
                 </View>
 
                 <View className="mt-5 gap-4">
-                    <ReservationCard
-                        venue="Capital Day Grill"
-                        extraMembers="+ 3..."
-                        reservationLabel="16/05/26 07:30 PM"
-                        expanded={expanded === "top"}
-                        onToggle={() => toggle("top")}
-                        currentGroupName={currentLabel}
-                    />
-                    <ReservationCard
-                        venue="Capital Day Grill"
-                        extraMembers="+ 3..."
-                        reservationLabel="18/05/26 07:30 PM"
-                        expanded={expanded === "bottom"}
-                        onToggle={() => toggle("bottom")}
-                        currentGroupName={currentLabel}
-                    />
+                    {visibleReservations.length === 0 ? (
+                        <Text className="text-center font-josefin text-[13px] text-[#888]">
+                            No reservations match your search or filters.
+                        </Text>
+                    ) : (
+                        visibleReservations.map((row) => {
+                            const label = formatReservationLabel(row.reservationAt);
+                            const past = isReservationPast(row.reservationAt);
+                            return (
+                                <ReservationCard
+                                    key={row.id}
+                                    venue={row.venue}
+                                    extraMembers={row.extraMembers}
+                                    reservationLabel={label}
+                                    isPast={past}
+                                    expanded={expandedId === row.id}
+                                    onToggle={() => toggleExpand(row.id)}
+                                    currentGroupName={currentLabel}
+                                />
+                            );
+                        })
+                    )}
                 </View>
             </ScrollView>
 
@@ -145,7 +261,105 @@ export default function ReservationsPage({
             >
                 <MainAppBottomNav activeTab={activeTab} onTabChange={onTabChange} />
             </View>
+
+            <OptionSheetModal
+                visible={sortMenuOpen}
+                title="Sort reservations"
+                onClose={() => setSortMenuOpen(false)}
+                options={(Object.keys(RES_SORT_LABELS) as ResSortKey[]).map(
+                    (id) => ({
+                        id,
+                        label: RES_SORT_LABELS[id],
+                    }),
+                )}
+                selectedId={sortKey}
+                onSelect={(id) => {
+                    setSortKey(id as ResSortKey);
+                    setSortMenuOpen(false);
+                }}
+            />
+
+            <OptionSheetModal
+                visible={filterMenuOpen}
+                title="Filter reservations"
+                onClose={() => setFilterMenuOpen(false)}
+                options={(
+                    Object.keys(RES_FILTER_LABELS) as ResFilterId[]
+                ).map((id) => ({
+                    id,
+                    label: RES_FILTER_LABELS[id],
+                }))}
+                selectedId={filterId}
+                onSelect={(id) => {
+                    setFilterId(id as ResFilterId);
+                    setFilterMenuOpen(false);
+                }}
+            />
         </SafeAreaView>
+    );
+}
+
+function OptionSheetModal<T extends string>({
+    visible,
+    title,
+    onClose,
+    options,
+    selectedId,
+    onSelect,
+}: {
+    visible: boolean;
+    title: string;
+    onClose: () => void;
+    options: { id: T; label: string }[];
+    selectedId: T;
+    onSelect: (id: T) => void;
+}) {
+    return (
+        <Modal visible={visible} transparent animationType="fade">
+            <View className="flex-1 justify-end bg-black/40">
+                <Pressable className="flex-1" onPress={onClose} />
+                <View className="rounded-t-3xl bg-white px-4 pb-6 pt-3">
+                    <Text className="font-josefin-bold text-[15px] text-[#2c2c2c]">
+                        {title}
+                    </Text>
+                    <View className="mt-3 gap-1">
+                        {options.map((o) => {
+                            const sel = o.id === selectedId;
+                            return (
+                                <TouchableOpacity
+                                    key={o.id}
+                                    onPress={() => onSelect(o.id)}
+                                    activeOpacity={0.88}
+                                    className="flex-row items-center justify-between rounded-xl px-3 py-3"
+                                    style={{
+                                        backgroundColor: sel ? "#fff3e7" : "#f7f7f7",
+                                    }}
+                                >
+                                    <Text className="font-josefin text-[14px] text-[#333]">
+                                        {o.label}
+                                    </Text>
+                                    {sel ? (
+                                        <FontAwesome
+                                            name="check"
+                                            size={14}
+                                            color={ORANGE_CTA}
+                                        />
+                                    ) : null}
+                                </TouchableOpacity>
+                            );
+                        })}
+                    </View>
+                    <TouchableOpacity
+                        onPress={onClose}
+                        className="mt-3 items-center rounded-xl bg-[#ececec] py-3"
+                    >
+                        <Text className="font-josefin-bold text-[13px] text-[#555]">
+                            Cancel
+                        </Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </Modal>
     );
 }
 
@@ -153,6 +367,7 @@ type ReservationCardProps = {
     venue: string;
     extraMembers: string;
     reservationLabel: string;
+    isPast: boolean;
     expanded: boolean;
     onToggle: () => void;
     currentGroupName: string;
@@ -162,6 +377,7 @@ function ReservationCard({
     venue,
     extraMembers,
     reservationLabel,
+    isPast,
     expanded,
     onToggle,
     currentGroupName,
@@ -199,16 +415,30 @@ function ReservationCard({
                             {extraMembers}
                         </Text>
                     </View>
-                    <RipplePressable
-                        borderRadius={8}
-                        onPress={addReceipt}
-                        className="rounded-lg px-3 py-2"
-                        style={{ backgroundColor: ORANGE_CTA }}
-                    >
-                        <Text className="font-josefin-bold text-[10px] text-white">
-                            Upload receipt
-                        </Text>
-                    </RipplePressable>
+                    {isPast ? (
+                        <RipplePressable
+                            borderRadius={8}
+                            onPress={addReceipt}
+                            className="rounded-lg px-3 py-2"
+                            style={{ backgroundColor: ORANGE_CTA }}
+                        >
+                            <Text className="font-josefin-bold text-[10px] text-white">
+                                Upload receipt
+                            </Text>
+                        </RipplePressable>
+                    ) : (
+                        <RipplePressable
+                            borderRadius={8}
+                            onPress={onToggle}
+                            className="flex-row items-center gap-1 rounded-lg px-3 py-2"
+                            style={{ backgroundColor: "#3a3a3a" }}
+                        >
+                            <Settings size={12} color="#fff" strokeWidth={2} />
+                            <Text className="font-josefin-bold text-[10px] text-white">
+                                Settings
+                            </Text>
+                        </RipplePressable>
+                    )}
                     <View
                         className="rounded-lg px-2 py-2"
                         style={{ backgroundColor: RES_ORANGE_CHIP }}
@@ -254,12 +484,29 @@ function ReservationCard({
 
     return (
         <View className="overflow-hidden rounded-2xl" style={{ backgroundColor: CARD_BG }}>
-            <View className="flex-row items-center justify-between px-3 py-3">
-                <View className="flex-1 flex-row items-center gap-2">
+            <View className="flex-row items-start justify-between px-3 py-3">
+                <TouchableOpacity
+                    onPress={onToggle}
+                    activeOpacity={0.92}
+                    className="min-w-0 flex-1 flex-row items-center gap-2 pr-2"
+                    accessibilityRole="button"
+                    accessibilityLabel="Collapse reservation"
+                >
                     <Text className="font-josefin-bold text-[15px] text-white">{venue}</Text>
                     <Pencil size={14} color="#ffffff" strokeWidth={2} />
-                </View>
+                </TouchableOpacity>
                 <View className="items-end gap-1">
+                    {!isPast ? (
+                        <View
+                            className="flex-row items-center gap-1 rounded-md px-2 py-1.5"
+                            style={{ backgroundColor: "#3a3a3a" }}
+                        >
+                            <Settings size={12} color="#fff" strokeWidth={2} />
+                            <Text className="font-josefin-bold text-[10px] text-white">
+                                Settings
+                            </Text>
+                        </View>
+                    ) : null}
                     <View
                         className="flex-row items-center gap-1 rounded-md px-2 py-1"
                         style={{ backgroundColor: RES_ORANGE_CHIP }}
@@ -290,19 +537,21 @@ function ReservationCard({
                             {extraMembers}
                         </Text>
                     </View>
-                    <RipplePressable
-                        borderRadius={8}
-                        onPress={addReceipt}
-                        className="rounded-lg px-3 py-2"
-                        style={{ backgroundColor: ORANGE_CTA }}
-                    >
-                        <Text className="font-josefin-bold text-[10px] text-white">
-                            Upload receipt
-                        </Text>
-                    </RipplePressable>
+                    {isPast ? (
+                        <RipplePressable
+                            borderRadius={8}
+                            onPress={addReceipt}
+                            className="rounded-lg px-3 py-2"
+                            style={{ backgroundColor: ORANGE_CTA }}
+                        >
+                            <Text className="font-josefin-bold text-[10px] text-white">
+                                Upload receipt
+                            </Text>
+                        </RipplePressable>
+                    ) : null}
                 </View>
 
-                {attachments.length > 0 ? (
+                {isPast && attachments.length > 0 ? (
                     <ScrollView
                         horizontal
                         showsHorizontalScrollIndicator={false}
