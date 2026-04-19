@@ -17,6 +17,11 @@ export type RecommendApiRestaurant = {
     hours: unknown;
     price_tier: number | null;
     similarity: number | null;
+    star_rating?: number | string | null;
+    review_count?: number | null;
+    short_description?: string | null;
+    distance_label?: string | null;
+    distance_meters?: number | null;
 };
 
 export type RecommendApiMenuItem = {
@@ -48,6 +53,50 @@ function formatHoursLine(hours: unknown): string {
     } catch {
         return "Hours vary";
     }
+}
+
+function parseStarRating(raw: number | string | null | undefined): number | null {
+    if (raw == null) return null;
+    if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+    if (typeof raw === "string") {
+        const n = Number.parseFloat(raw);
+        return Number.isFinite(n) ? n : null;
+    }
+    return null;
+}
+
+function formatDistanceLine(
+    meters: number | null | undefined,
+    fallbackLabel: string | null | undefined,
+): string {
+    if (typeof meters === "number" && Number.isFinite(meters) && meters >= 0) {
+        const mi = meters / 1609.344;
+        const digits = mi < 10 ? 2 : 1;
+        return `${mi.toFixed(digits)} mi. away`;
+    }
+    const label = fallbackLabel?.trim().replace(/\.$/, "");
+    if (label) {
+        if (/\baway\b/i.test(label)) return label.endsWith(".") ? label : `${label}.`;
+        if (/\bmi\b|km\b|min\b/i.test(label)) {
+            return label.endsWith(".") ? label : `${label}. away`;
+        }
+        return `${label} away`;
+    }
+    return "Nearby";
+}
+
+function formatReviewLine(count: number | null | undefined): string {
+    if (typeof count === "number" && Number.isFinite(count) && count >= 0) {
+        return `${Math.round(count)} reviews`;
+    }
+    return "—";
+}
+
+function formatRatingLine(star: number | null): string {
+    if (star != null && Number.isFinite(star)) {
+        return star.toFixed(2);
+    }
+    return "—";
 }
 
 function pickThumbs(photoUrls: string[]): readonly string[] {
@@ -102,19 +151,24 @@ export function mapRecommendApiToRestaurant(
             ? restaurant.cuisine_tags
             : ["Dining"];
 
-    const sim = restaurant.similarity;
+    const star = parseStarRating(restaurant.star_rating);
     const customerQuote =
-        typeof sim === "number" && Number.isFinite(sim)
-            ? `Picked for your taste (distance ${sim.toFixed(3)}).`
-            : "Curated near you.";
+        restaurant.short_description?.trim() ||
+        (typeof restaurant.similarity === "number" &&
+        Number.isFinite(restaurant.similarity)
+            ? `Picked for your taste (match ${restaurant.similarity.toFixed(3)}).`
+            : "Curated near you.");
 
     return {
         id: restaurant.restaurant_id,
         name: restaurant.name,
-        rating: "—",
-        reviewCount: "—",
-        distance: "—",
-        cityLabel: "Near you",
+        rating: formatRatingLine(star),
+        reviewCount: formatReviewLine(restaurant.review_count ?? null),
+        distance: formatDistanceLine(
+            restaurant.distance_meters ?? null,
+            restaurant.distance_label ?? null,
+        ),
+        cityLabel: "Austin TX",
         menuHoursLine: formatHoursLine(restaurant.hours),
         reservation: DEFAULT_RESERVATION,
         cuisines,

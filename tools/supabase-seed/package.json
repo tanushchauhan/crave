@@ -12,7 +12,9 @@
     "seed:reset": "node seed-supabase.mjs --reset",
     "seed:no-embeddings": "node seed-supabase.mjs --no-embeddings",
     "fill-blanks": "node fill-restaurant-blanks.mjs",
-    "fill-blanks:dry-run": "node fill-restaurant-blanks.mjs --dry-run"
+    "fill-blanks:dry-run": "node fill-restaurant-blanks.mjs --dry-run",
+    "backfill:card-fields": "node backfill-restaurant-card-fields.mjs",
+    "backfill:card-fields:dry-run": "node backfill-restaurant-card-fields.mjs --dry-run"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.758.0",

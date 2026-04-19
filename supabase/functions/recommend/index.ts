@@ -15,6 +15,11 @@ type RpcRow = {
     hours: unknown;
     price_tier: number | null;
     similarity: number | null;
+    star_rating: number | string | null;
+    review_count: number | null;
+    short_description: string | null;
+    distance_label: string | null;
+    distance_meters: number | null;
 };
 
 type MenuRow = {
@@ -191,6 +196,11 @@ Deno.serve(async (req) => {
             hours: row.hours ?? {},
             price_tier: row.price_tier,
             similarity: row.similarity,
+            star_rating: row.star_rating,
+            review_count: row.review_count,
+            short_description: row.short_description,
+            distance_label: row.distance_label,
+            distance_meters: row.distance_meters,
         },
         menu_items: menuByRestaurant.get(row.restaurant_id) ?? [],
     }));
