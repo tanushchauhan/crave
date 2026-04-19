@@ -168,6 +168,8 @@ def edge_fn(name):
     return f"{base}/functions/v1/{name}" if base else ""
 
 v = {}
+if base:
+    v["SUPABASE_URL"] = base
 anon = (os.environ.get("SUPABASE_ANON_KEY") or "").strip()
 if anon:
     v["SUPABASE_ANON_KEY"] = anon
@@ -186,6 +188,17 @@ for env_key, fn_name in (
 ):
     explicit = (os.environ.get(env_key) or "").strip()
     v[env_key] = explicit or edge_fn(fn_name)
+
+rb = (os.environ.get("RECEIPTS_BUCKET") or os.environ.get("CRAVE_RECEIPTS_BUCKET") or "").strip()
+if rb:
+    v["RECEIPTS_BUCKET"] = rb
+
+hmac_proxy = (os.environ.get("INTERNAL_HMAC_SECRET") or os.environ.get("CRAVE_INTERNAL_SECRET") or "").strip()
+if hmac_proxy:
+    v["INTERNAL_HMAC_SECRET"] = hmac_proxy
+titan = (os.environ.get("TITAN_EMBEDDING_MODEL_ID") or "").strip()
+if titan:
+    v["TITAN_EMBEDDING_MODEL_ID"] = titan
 
 v = {k: val for k, val in v.items() if val}
 if not v.get("SUPABASE_ANON_KEY"):
@@ -440,6 +453,8 @@ print(next((r['RouteId'] for r in d.get('Items',[]) if r.get('RouteKey')==k), ''
       --target "integrations/${INT_ID}"
   }
 
+  upsert_route "POST /receipts/signed-url"
+  upsert_route "POST /internal/embeddings/text"
   upsert_route "POST /voice/place-order"
   upsert_route "POST /voice/resolve-group"
   upsert_route "POST /voice/recommend"
@@ -504,7 +519,7 @@ print(next((r['RouteId'] for r in d.get('Items',[]) if r.get('RouteKey')=='POST 
     "http://localhost:8081"
   ],
   "AllowMethods": ["GET", "POST", "OPTIONS"],
-  "AllowHeaders": ["authorization", "content-type", "apikey"]
+  "AllowHeaders": ["authorization", "content-type", "apikey", "x-crave-internal-secret"]
 }
 CORS
   aws apigatewayv2 update-api --api-id "$API_ID" --cors-configuration "file://${GEN}/http-api-cors.json"

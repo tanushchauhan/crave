@@ -61,16 +61,19 @@ done
 
 # Optional: push Edge secrets from .env (hosted CLI rejects names starting with SUPABASE_).
 SVC_KEY="${CRAVE_SERVICE_ROLE_KEY:-${SUPABASE_SERVICE_ROLE_KEY:-}}"
-if [[ -n "${CRAVE_INTERNAL_SECRET:-}" || -n "$SVC_KEY" ]]; then
+if [[ -n "${CRAVE_INTERNAL_SECRET:-}" || -n "$SVC_KEY" || -n "${CRAVE_AWS_API_BASE:-}" ]]; then
   echo "== supabase secrets set (from .env) =="
   ARGS=()
   [[ -n "${CRAVE_INTERNAL_SECRET:-}" ]] && ARGS+=(CRAVE_INTERNAL_SECRET="$CRAVE_INTERNAL_SECRET")
   [[ -n "$SVC_KEY" ]] && ARGS+=(CRAVE_SERVICE_ROLE_KEY="$SVC_KEY")
+  # match-receipt-items stage 3: calls crave-bedrock-proxy POST /internal/embeddings/text (same secret header).
+  [[ -n "${CRAVE_AWS_API_BASE:-}" ]] && ARGS+=(CRAVE_AWS_API_BASE="$CRAVE_AWS_API_BASE")
   if ((${#ARGS[@]})); then
     "${SUPABASE_BIN[@]}" secrets set "${ARGS[@]}"
   fi
 else
-  echo "Skipping secrets set (set CRAVE_INTERNAL_SECRET and SUPABASE_SERVICE_ROLE_KEY or CRAVE_SERVICE_ROLE_KEY in .env)."
+  echo "Skipping secrets set (set CRAVE_INTERNAL_SECRET, CRAVE_AWS_API_BASE, and SUPABASE_SERVICE_ROLE_KEY or CRAVE_SERVICE_ROLE_KEY in .env)."
 fi
 
 echo "Done. Verify: ${SUPABASE_BIN[*]} functions list"
+echo "Reminder: hosted Auth → URL configuration must allow your Expo / Next dev origins (see docs/client-env.md)."
