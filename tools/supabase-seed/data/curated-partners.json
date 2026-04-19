@@ -1,0 +1,173 @@
+[
+  {
+    "slug": "kerbey-central",
+    "name": "Kerbey Lane Cafe (Central)",
+    "cuisine_tags": ["american", "breakfast", "comfort"],
+    "price_tier": 2,
+    "lat": 30.3035,
+    "lng": -97.7393,
+    "phone_e164": "+15124515200",
+    "menu": [
+      { "name": "Kerbey Queso", "description": "Classic melted cheese dip with pico and tortilla chips.", "price_cents": 895 },
+      { "name": "Giant Buttermilk Pancakes", "description": "Fluffy stack with warm syrup and butter.", "price_cents": 1095 },
+      { "name": "Eggs Benedict", "description": "English muffin, Canadian bacon, hollandaise, home fries.", "price_cents": 1395 },
+      { "name": "Lemon Rosemary Chicken", "description": "Grilled breast, seasonal vegetables, mashed potatoes.", "price_cents": 1695 },
+      { "name": "Black Bean Burger", "description": "House-made patty, avocado, chipotle aioli, brioche bun.", "price_cents": 1295 },
+      { "name": "Iced Turbo Coffee", "description": "Cold brew with hazelnut and half-and-half.", "price_cents": 495 }
+    ]
+  },
+  {
+    "slug": "torchys-drag",
+    "name": "Torchy's Tacos (Guadalupe)",
+    "cuisine_tags": ["mexican", "tacos", "tex-mex"],
+    "price_tier": 2,
+    "lat": 30.2969,
+    "lng": -97.7414,
+    "phone_e164": "+15124949443",
+    "menu": [
+      { "name": "Trailer Park Taco", "description": "Fried chicken, green chiles, lettuce, pico, cheddar on flour tortilla.", "price_cents": 525 },
+      { "name": "Brushfire Taco", "description": "Jerk chicken, grilled jalapenos, mango, sour cream, cilantro.", "price_cents": 525 },
+      { "name": "Crossroads Taco", "description": "Smoked beef brisket, grilled onions, jalapeno, cilantro.", "price_cents": 595 },
+      { "name": "Green Chile Queso", "description": "Torchy's queso with hatch green chiles and chips.", "price_cents": 695 },
+      { "name": "Street Corn", "description": "Elote-style cup with cotija, lime, and crema.", "price_cents": 450 },
+      { "name": "Mexican Coke", "description": "Glass bottle.", "price_cents": 350 }
+    ]
+  },
+  {
+    "slug": "pterrys-guad",
+    "name": "P. Terry's Burger Stand (Guadalupe)",
+    "cuisine_tags": ["burgers", "fast-food", "american"],
+    "price_tier": 1,
+    "lat": 30.2891,
+    "lng": -97.7412,
+    "phone_e164": "+15122347400",
+    "menu": [
+      { "name": "Double with Cheese", "description": "Two patties, American cheese, lettuce, tomato, special sauce.", "price_cents": 595 },
+      { "name": "Veggie Burger", "description": "Whole-wheat bun, house veggie patty, fixings.", "price_cents": 495 },
+      { "name": "Hand-Cut Fries", "description": "Russet potatoes, light salt.", "price_cents": 225 },
+      { "name": "Chocolate Shake", "description": "Real ice cream, whipped cream optional.", "price_cents": 395 },
+      { "name": "Breakfast Burger", "description": "Egg, bacon, cheese, hash brown on bun (breakfast hours).", "price_cents": 625 },
+      { "name": "Sweet Tea", "description": "Large.", "price_cents": 195 }
+    ]
+  },
+  {
+    "slug": "hopdoddy-guad",
+    "name": "Hopdoddy Burger Bar (Guadalupe)",
+    "cuisine_tags": ["burgers", "american", "beer"],
+    "price_tier": 3,
+    "lat": 30.2958,
+    "lng": -97.7418,
+    "phone_e164": "+15122437500",
+    "menu": [
+      { "name": "Classic Burger", "description": "Angus beef, cheddar, lettuce, tomato, onion, sassy sauce.", "price_cents": 895 },
+      { "name": "Llano Poblano", "description": "Beef, pepper jack, poblano strips, applewood bacon.", "price_cents": 1095 },
+      { "name": "El Diablo", "description": "Angus patty, habanero and serrano chiles, pepper jack.", "price_cents": 1095 },
+      { "name": "Parmesan Truffle Fries", "description": "Hand-cut fries, truffle oil, parmesan.", "price_cents": 795 },
+      { "name": "Draft Local IPA", "description": "Rotating Austin brewery tap.", "price_cents": 695 },
+      { "name": "Chocolate Shake", "description": "Ghirardelli chocolate, custard base.", "price_cents": 695 }
+    ]
+  },
+  {
+    "slug": "hula-hut",
+    "name": "Hula Hut",
+    "cuisine_tags": ["tex-mex", "seafood", "lake-view"],
+    "price_tier": 3,
+    "lat": 30.2798,
+    "lng": -97.7742,
+    "phone_e164": "+15124784482",
+    "menu": [
+      { "name": "Tiki Tacos", "description": "Grilled fish or chicken, pineapple slaw, flour tortillas.", "price_cents": 1495 },
+      { "name": "Volcano Nachos", "description": "Layered chips, queso, beans, jalapenos, guacamole.", "price_cents": 1295 },
+      { "name": "Mango Margarita", "description": "Frozen, salt rim optional.", "price_cents": 995 },
+      { "name": "Coconut Shrimp", "description": "Crispy shrimp, sweet chili dip.", "price_cents": 1395 },
+      { "name": "Chicken Fajitas", "description": "Sizzling platter with peppers, onions, tortillas.", "price_cents": 1895 },
+      { "name": "Key Lime Pie", "description": "Graham crust, whipped cream.", "price_cents": 795 }
+    ]
+  },
+  {
+    "slug": "mozart-lake",
+    "name": "Mozart's Coffee Roasters",
+    "cuisine_tags": ["coffee", "bakery", "dessert"],
+    "price_tier": 2,
+    "lat": 30.2815,
+    "lng": -97.7841,
+    "phone_e164": "+15124472600",
+    "menu": [
+      { "name": "House Latte", "description": "Double shot, steamed milk, latte art.", "price_cents": 525 },
+      { "name": "Cold Brew Growler Refill", "description": "Smooth cold brew concentrate style.", "price_cents": 895 },
+      { "name": "Almond Croissant", "description": "Buttery layers, almond paste.", "price_cents": 495 },
+      { "name": "Cheesecake Slice", "description": "Seasonal topping.", "price_cents": 695 },
+      { "name": "Breakfast Taco Plate", "description": "Two tacos, beans, salsa.", "price_cents": 1195 },
+      { "name": "Matcha Latte", "description": "Ceremonial grade matcha, oat milk.", "price_cents": 595 }
+    ]
+  },
+  {
+    "slug": "clay-pit",
+    "name": "The Clay Pit",
+    "cuisine_tags": ["indian", "contemporary", "downtown"],
+    "price_tier": 3,
+    "lat": 30.2689,
+    "lng": -97.7417,
+    "phone_e164": "+15124533131",
+    "menu": [
+      { "name": "Garlic Naan", "description": "Tandoor-fired bread with garlic butter.", "price_cents": 495 },
+      { "name": "Butter Chicken", "description": "Tomato-cream sauce, basmati rice.", "price_cents": 1995 },
+      { "name": "Lamb Rogan Josh", "description": "Kashmiri-style curry, yogurt marinade.", "price_cents": 2295 },
+      { "name": "Palak Paneer", "description": "Spinach, house-made paneer.", "price_cents": 1795 },
+      { "name": "Mango Lassi", "description": "Sweet yogurt drink.", "price_cents": 495 },
+      { "name": "Chai Masala", "description": "Spiced black tea, steamed milk.", "price_cents": 395 }
+    ]
+  },
+  {
+    "slug": "madam-mams",
+    "name": "Madam Mam's Thai Cuisine",
+    "cuisine_tags": ["thai", "noodles", "spicy"],
+    "price_tier": 2,
+    "lat": 30.2935,
+    "lng": -97.7425,
+    "phone_e164": "+15124719969",
+    "menu": [
+      { "name": "Pad Thai", "description": "Rice noodles, tamarind, egg, peanuts, lime.", "price_cents": 1295 },
+      { "name": "Green Curry", "description": "Coconut milk, Thai eggplant, basil, jasmine rice.", "price_cents": 1395 },
+      { "name": "Tom Yum Soup", "description": "Hot and sour lemongrass broth, shrimp or tofu.", "price_cents": 695 },
+      { "name": "Thai Iced Tea", "description": "Strong tea, sweetened condensed milk.", "price_cents": 395 },
+      { "name": "Summer Rolls", "description": "Shrimp, herbs, peanut sauce.", "price_cents": 895 },
+      { "name": "Mango Sticky Rice", "description": "Sweet coconut rice, ripe mango.", "price_cents": 795 }
+    ]
+  },
+  {
+    "slug": "veracruz-26",
+    "name": "Veracruz All Natural (26th St)",
+    "cuisine_tags": ["mexican", "breakfast", "tacos"],
+    "price_tier": 2,
+    "lat": 30.2906,
+    "lng": -97.7428,
+    "phone_e164": "+15129805595",
+    "menu": [
+      { "name": "Migas Taco", "description": "Scrambled eggs, tortilla strips, pico, jack cheese.", "price_cents": 425 },
+      { "name": "Fish Taco", "description": "Grilled fish, cabbage slaw, chipotle crema.", "price_cents": 495 },
+      { "name": "Al Pastor Taco", "description": "Marinated pork, pineapple, cilantro, onion.", "price_cents": 425 },
+      { "name": "Agua Fresca", "description": "Daily fruit flavor.", "price_cents": 350 },
+      { "name": "Breakfast Bowl", "description": "Black beans, eggs, avocado, salsa verde.", "price_cents": 995 },
+      { "name": "Chips and Guacamole", "description": "Fresh avocado, lime, cilantro.", "price_cents": 795 }
+    ]
+  },
+  {
+    "slug": "pluckers-rio",
+    "name": "Pluckers Wing Bar (Rio Grande)",
+    "cuisine_tags": ["wings", "sports-bar", "american"],
+    "price_tier": 2,
+    "lat": 30.2842,
+    "lng": -97.7415,
+    "phone_e164": "+15124737500",
+    "menu": [
+      { "name": "Baker's Dozen Wings", "description": "Choose sauce: Buffalo, lemon pepper, honey BBQ.", "price_cents": 1595 },
+      { "name": "Waffles N Cheese Fries", "description": "Waffle fries, queso, bacon bits.", "price_cents": 995 },
+      { "name": "Blue Cheese Wedge Salad", "description": "Iceberg, tomatoes, bacon, dressing.", "price_cents": 895 },
+      { "name": "Chicken Sandwich", "description": "Crispy breast, pickles, brioche.", "price_cents": 1195 },
+      { "name": "Pitcher Domestic Beer", "description": "Rotating domestic draft.", "price_cents": 1495 },
+      { "name": "Fried Pickles", "description": "Ranch dipping sauce.", "price_cents": 695 },
+      { "name": "Brownie Sundae", "description": "Vanilla ice cream, chocolate sauce.", "price_cents": 795 }
+    ]
+  }
+]

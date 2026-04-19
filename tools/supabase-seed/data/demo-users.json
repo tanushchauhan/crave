@@ -1,0 +1,74 @@
+[
+  {
+    "slug": "alex-owner",
+    "display_name": "Alex Rivera",
+    "phone_e164": "+18005550101",
+    "venmo_handle": "alex-ut-crave",
+    "cashapp_handle": "$alexcrave",
+    "preference_text": "Loves spicy Tex-Mex, craft burgers, and late-night tacos. Dislikes seafood and overly sweet desserts.",
+    "dietary": []
+  },
+  {
+    "slug": "sam",
+    "display_name": "Sam Okonkwo",
+    "phone_e164": "+18005550102",
+    "venmo_handle": "sam-o-austin",
+    "cashapp_handle": null,
+    "preference_text": "Vegetarian-friendly spots, Mediterranean bowls, strong coffee. Enjoys patio dining.",
+    "dietary": [{ "constraint_type": "vegetarian", "hard": true }]
+  },
+  {
+    "slug": "jordan",
+    "display_name": "Jordan Lee",
+    "phone_e164": "+18005550103",
+    "venmo_handle": "jordan-lee-atx",
+    "cashapp_handle": null,
+    "preference_text": "Korean BBQ, ramen, anything umami-heavy. Budget-conscious but splurges on wings.",
+    "dietary": []
+  },
+  {
+    "slug": "riley",
+    "display_name": "Riley Chen",
+    "phone_e164": "+18005550104",
+    "venmo_handle": "rileychen",
+    "cashapp_handle": null,
+    "preference_text": "Date-night Italian, cocktails, shareable small plates. Avoids very loud bars.",
+    "dietary": []
+  },
+  {
+    "slug": "morgan",
+    "display_name": "Morgan Blake",
+    "phone_e164": "+18005550105",
+    "venmo_handle": "morgan-blake",
+    "cashapp_handle": null,
+    "preference_text": "Family-friendly, kids menus, pizza, ice cream. Nut allergy.",
+    "dietary": [{ "constraint_type": "tree_nuts", "hard": true }]
+  },
+  {
+    "slug": "taylor",
+    "display_name": "Taylor Brooks",
+    "phone_e164": "+18005550106",
+    "venmo_handle": "taylorbrooks",
+    "cashapp_handle": null,
+    "preference_text": "BBQ brisket, breakfast tacos, cold brew. Loves live music venues nearby.",
+    "dietary": []
+  },
+  {
+    "slug": "casey",
+    "display_name": "Casey Nguyen",
+    "phone_e164": "+18005550107",
+    "venmo_handle": "casey-nguyen",
+    "cashapp_handle": null,
+    "preference_text": "Vietnamese street food, pho, banh mi, bubble tea. Spicy level: high.",
+    "dietary": []
+  },
+  {
+    "slug": "drew",
+    "display_name": "Drew Patel",
+    "phone_e164": "+18005550108",
+    "venmo_handle": "drewpatel",
+    "cashapp_handle": null,
+    "preference_text": "Indian curries, naan, lassi. Gluten-aware when ordering.",
+    "dietary": [{ "constraint_type": "gluten_free", "hard": false }]
+  }
+]

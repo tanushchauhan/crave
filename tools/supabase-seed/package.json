@@ -1,0 +1,19 @@
+{
+  "name": "@crave/supabase-seed",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Demo seed for CRAVE Supabase (UT Austin area). Run from this directory so node_modules stays out of the repo root.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "seed": "node seed-supabase.mjs",
+    "seed:reset": "node seed-supabase.mjs --reset",
+    "seed:no-embeddings": "node seed-supabase.mjs --no-embeddings"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.758.0",
+    "@supabase/supabase-js": "^2.45.0"
+  }
+}

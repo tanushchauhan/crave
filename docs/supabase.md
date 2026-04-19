@@ -750,10 +750,12 @@ Agents must **`apply_migration`** for final trigger code after unit testing SQL 
 
 ## 13. Seeds and demo data
 
-1. **Restaurants:** ~200 Austin rows — use Places/Yelp per [plan.md section 3.1](plan.md#31-where-the-recommendations-come-from-data-sources). Generate **1536-d** and **1024-d** vectors with **Bedrock** (Lambda batch job), then bulk-insert via `execute_sql` + `COPY` or a staging table.
-2. **Fake bookings:** insert historical `bookings` for demo users for group reconciliation demos.
-3. **Sample orders:** insert a few **`orders` + `order_items`** for partner restaurants so **Live Bookings and Orders** and chatbot order summaries have data ([plan.md section 4.1](plan.md#41-dashboard-pages-what-ships-for-the-demo) item 2).
-4. **Partner flags:** mark 5–10 `restaurants.is_crave_partner = true` for booking, ordering, and dashboard demos.
+Shipped as a **Node script** under `tools/supabase-seed/` (see [tools/supabase-seed/README.md](../tools/supabase-seed/README.md)): `npm install` and `npm run seed` from that directory (dependencies stay out of the repo root).
+
+1. **Restaurants:** ~60 rows near UT Austin — **OpenStreetMap Overpass** (~50 background `amenity=restaurant` points, no API key) plus **10 curated CRAVE partners** with hand-written menus. **1536-d** text embeddings via **Amazon Bedrock Titan Embed Text** from the same script (service role). **`image_embedding` (1024-d)** is left null in MVP seed; production would add Titan Multimodal (or chosen 1024-d model) in a batch job. **Production restaurant catalog:** Google Places + optional Yelp Fusion for ratings, photos, hours, and license-clean coverage once billed API keys exist; the MVP deliberately avoids those keys.
+2. **Fake bookings:** the seed script inserts historical and upcoming `bookings` (mix of `partner_app` and `phone_call_logged`) for demo users and groups.
+3. **Sample orders:** the seed script inserts **`orders` + `order_items`** for partner restaurants so **Live Bookings and Orders** and chatbot order summaries have data ([plan.md section 4.1](plan.md#41-dashboard-pages-what-ships-for-the-demo) item 2).
+4. **Partner flags:** ten curated rows have `is_crave_partner = true`; `restaurants.owner_user_id` is set to the first demo user (`alex-owner` in seed JSON) so B2B RLS and chatbot RPCs have a real owner scope when that account signs in.
 
 ---
 
