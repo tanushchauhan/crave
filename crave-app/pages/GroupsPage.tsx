@@ -16,6 +16,7 @@ import FontAwesome5 from "@expo/vector-icons/FontAwesome5";
 import { ChevronDown, Pencil, Search, Settings } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+    ActivityIndicator,
     Modal,
     Pressable,
     ScrollView,
@@ -65,16 +66,18 @@ export default function GroupsPage({
     const navHeight = 72;
     const {
         groups,
+        groupsLoading,
+        groupsError,
+        refreshGroups,
         currentGroupId,
         setCurrentGroupId,
         removeMemberPhone,
         renameGroup,
+        updateGroupMeta,
     } = useGroupsSession();
 
     const [search, setSearch] = useState("");
-    const [expandedId, setExpandedId] = useState<string | null>(
-        groups[0]?.id ?? null,
-    );
+    const [expandedId, setExpandedId] = useState<string | null>(null);
     const [settingsDetailGroupId, setSettingsDetailGroupId] = useState<
         string | null
     >(null);
@@ -83,6 +86,17 @@ export default function GroupsPage({
     const [sortMenuOpen, setSortMenuOpen] = useState(false);
     const [filterMenuOpen, setFilterMenuOpen] = useState(false);
     const [addMemberGroupId, setAddMemberGroupId] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (groups.length === 0) {
+            setExpandedId(null);
+            setSettingsDetailGroupId(null);
+            return;
+        }
+        setExpandedId((cur) =>
+            cur && groups.some((g) => g.id === cur) ? cur : groups[0]!.id,
+        );
+    }, [groups]);
 
     const tagList = useMemo(() => collectGroupTags(groups), [groups]);
 
@@ -195,6 +209,33 @@ export default function GroupsPage({
                     }
                 />
 
+                {groupsLoading ? (
+                    <View className="mt-8 items-center py-8">
+                        <ActivityIndicator size="large" color={ORANGE_CTA} />
+                        <Text className="mt-2 font-josefin text-[13px] text-[#888]">
+                            Loading groups…
+                        </Text>
+                    </View>
+                ) : groupsError ? (
+                    <View className="mt-4 rounded-2xl bg-[#fff3e8] px-4 py-4">
+                        <Text className="font-josefin-bold text-[14px] text-[#c45a00]">
+                            Could not load groups
+                        </Text>
+                        <Text className="mt-1 font-josefin text-[12px] text-[#666]">
+                            {groupsError}
+                        </Text>
+                        <TouchableOpacity
+                            onPress={() => void refreshGroups()}
+                            className="mt-3 self-start rounded-full px-4 py-2"
+                            style={{ backgroundColor: ORANGE_CTA }}
+                        >
+                            <Text className="font-josefin-bold text-[13px] text-white">
+                                Retry
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
+                ) : null}
+
                 <View className="mt-3 flex-row items-center gap-2 rounded-2xl bg-white px-3 py-2.5">
                     <Search size={16} color={MUTED} strokeWidth={2} />
                     <TextInput
@@ -256,11 +297,15 @@ export default function GroupsPage({
                 </View>
 
                 <View className="mt-5 gap-4">
-                    {visibleGroups.length === 0 ? (
+                    {!groupsLoading && !groupsError && groups.length === 0 ? (
+                        <Text className="text-center font-josefin text-[13px] text-[#888]">
+                            No groups yet. Tap Add Group to create one.
+                        </Text>
+                    ) : !groupsLoading && !groupsError && visibleGroups.length === 0 ? (
                         <Text className="text-center font-josefin text-[13px] text-[#888]">
                             No groups match your search and filters.
                         </Text>
-                    ) : (
+                    ) : groupsLoading || groupsError ? null : (
                         visibleGroups.map((group) => (
                             <GroupCard
                                 key={group.id}
@@ -280,9 +325,10 @@ export default function GroupsPage({
                                     setAddMemberGroupId(group.id)
                                 }
                                 onRemovePhone={(phone) =>
-                                    removeMemberPhone(group.id, phone)
+                                    void removeMemberPhone(group.id, phone)
                                 }
                                 renameGroup={renameGroup}
+                                updateGroupMeta={updateGroupMeta}
                             />
                         ))
                     )}
@@ -415,7 +461,11 @@ type GroupCardProps = {
     onSetCurrent: () => void;
     onPressAddMember: () => void;
     onRemovePhone: (phone: string) => void;
-    renameGroup: (groupId: string, name: string) => void;
+    renameGroup: (groupId: string, name: string) => Promise<void>;
+    updateGroupMeta: (
+        groupId: string,
+        input: { descriptionHint: string; tags?: string[] },
+    ) => Promise<void>;
 };
 
 function GroupCard({
@@ -430,10 +480,12 @@ function GroupCard({
     onPressAddMember,
     onRemovePhone,
     renameGroup,
+    updateGroupMeta,
 }: GroupCardProps) {
     const [description, setDescription] = useState("");
     const [editingName, setEditingName] = useState(false);
     const [draftName, setDraftName] = useState(group.name);
+    const [savingMeta, setSavingMeta] = useState(false);
 
     const membersLabel =
         group.phones.length > 0
@@ -444,9 +496,20 @@ function GroupCard({
         if (!editingName) setDraftName(group.name);
     }, [group.name, editingName]);
 
+    useEffect(() => {
+        setDescription(group.descriptionHint);
+    }, [group.id, group.descriptionHint]);
+
     const commitName = () => {
-        renameGroup(group.id, draftName);
-        setEditingName(false);
+        void (async () => {
+            try {
+                await renameGroup(group.id, draftName);
+                setEditingName(false);
+            } catch {
+                setDraftName(group.name);
+                setEditingName(false);
+            }
+        })();
     };
 
     const togglePencil = () => {
@@ -456,6 +519,22 @@ function GroupCard({
             setDraftName(group.name);
             setEditingName(true);
         }
+    };
+
+    const saveAndClose = () => {
+        void (async () => {
+            setSavingMeta(true);
+            try {
+                await updateGroupMeta(group.id, {
+                    descriptionHint:
+                        description.trim() || group.descriptionHint,
+                    tags: group.tags,
+                });
+                onToggleExpand();
+            } finally {
+                setSavingMeta(false);
+            }
+        })();
     };
 
     if (!expanded) {
@@ -663,14 +742,18 @@ function GroupCard({
 
                 <View className="mt-4 flex-row justify-end pb-2">
                     <TouchableOpacity
-                        onPress={onToggleExpand}
+                        onPress={saveAndClose}
                         activeOpacity={0.88}
+                        disabled={savingMeta}
                         className="flex-row items-center gap-2 rounded-full px-4 py-2.5"
-                        style={{ backgroundColor: ORANGE_CTA }}
+                        style={{
+                            backgroundColor: ORANGE_CTA,
+                            opacity: savingMeta ? 0.6 : 1,
+                        }}
                     >
                         <FontAwesome name="floppy-o" size={14} color="white" />
                         <Text className="font-josefin-bold text-[12px] text-white">
-                            Save and Close
+                            {savingMeta ? "Saving…" : "Save and Close"}
                         </Text>
                     </TouchableOpacity>
                 </View>

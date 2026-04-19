@@ -1,4 +1,5 @@
 import { useGroupsSession } from "@/context/GroupsSessionContext";
+import { parseToE164 } from "@/lib/phone";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -31,18 +32,40 @@ export default function AddMemberModal({
 }: AddMemberModalProps) {
     const { addMemberPhone } = useGroupsSession();
     const [phone, setPhone] = useState("");
+    const [localError, setLocalError] = useState<string | null>(null);
+    const [submitting, setSubmitting] = useState(false);
 
     useEffect(() => {
-        if (visible) setPhone("");
+        if (visible) {
+            setPhone("");
+            setLocalError(null);
+        }
     }, [visible, groupId]);
 
     const handleAdd = useCallback(() => {
         if (!groupId) return;
         const trimmed = phone.trim();
         if (!trimmed) return;
-        addMemberPhone(groupId, trimmed);
-        setPhone("");
-        onClose();
+
+        const parsed = parseToE164(trimmed);
+        if (!parsed.ok) {
+            setLocalError(parsed.message);
+            return;
+        }
+
+        setLocalError(null);
+        setSubmitting(true);
+        void (async () => {
+            try {
+                await addMemberPhone(groupId, parsed.e164);
+                setPhone("");
+                onClose();
+            } catch (e: unknown) {
+                setLocalError(e instanceof Error ? e.message : "Could not add member");
+            } finally {
+                setSubmitting(false);
+            }
+        })();
     }, [addMemberPhone, groupId, onClose, phone]);
 
     return (
@@ -91,26 +114,39 @@ export default function AddMemberModal({
                         </Text>
                         <TextInput
                             value={phone}
-                            onChangeText={setPhone}
+                            onChangeText={(t) => {
+                                setPhone(t);
+                                setLocalError(null);
+                            }}
                             placeholder="(555) - 123 - 4567"
                             placeholderTextColor={MUTED}
                             keyboardType="phone-pad"
                             className="mt-1 rounded-xl border border-[#e0e0e0] bg-white px-3 py-2.5 font-josefin text-[14px] text-[#2c2c2c]"
                         />
+                        <Text className="mt-1 font-josefin text-[11px] text-[#888]">
+                            They need a Crave account with this exact number (E.164).
+                        </Text>
+
+                        {localError ? (
+                            <Text className="mt-2 font-josefin text-[12px] text-[#c45a00]">
+                                {localError}
+                            </Text>
+                        ) : null}
 
                         <TouchableOpacity
                             onPress={handleAdd}
                             activeOpacity={0.9}
-                            disabled={!groupId || !phone.trim()}
+                            disabled={!groupId || !phone.trim() || submitting}
                             className="mt-5 flex-row items-center justify-center gap-2 rounded-2xl py-3.5"
                             style={{
                                 backgroundColor: ORANGE_CTA,
-                                opacity: groupId && phone.trim() ? 1 : 0.45,
+                                opacity:
+                                    groupId && phone.trim() && !submitting ? 1 : 0.45,
                             }}
                         >
                             <FontAwesome name="user-plus" size={14} color="#fff" />
                             <Text className="font-josefin-bold text-[14px] text-white">
-                                Add member
+                                {submitting ? "Adding…" : "Add member"}
                             </Text>
                         </TouchableOpacity>
                     </View>

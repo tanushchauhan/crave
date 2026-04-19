@@ -24,6 +24,10 @@ The home tab loads venues via **`supabase.functions.invoke('recommend')`**, whic
 
 After **`supabase db push`**, redeploy Edge (`./scripts/supabase-deploy.sh` or `supabase functions deploy recommend`). Without seeded restaurants / embeddings, the list may be empty—use **`tools/supabase-seed`** (see [docs/supabase.md](../docs/supabase.md) §13).
 
+## Groups tab
+
+Groups load from Supabase **`dining_groups`** and **`group_members`** (signed-in user, RLS). Add member by **phone** uses E.164 normalization ([`lib/phone.ts`](lib/phone.ts)); the invitee must already have **`users.phone`** set to that value. Apply migrations **`20260422100000_group_invite_and_resolve_rpcs.sql`** and **`20260422101500_users_select_group_peers.sql`** then redeploy Edge if you use **`resolve-group`** (see [docs/supabase.md](../docs/supabase.md) §11).
+
 ## iOS Simulator
 
 ```bash

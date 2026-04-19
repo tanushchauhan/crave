@@ -26,11 +26,14 @@ export default function AddGroupModal({ visible, onClose }: AddGroupModalProps) 
     const [name, setName] = useState("");
     const [hint, setHint] = useState("");
     const [tagsRaw, setTagsRaw] = useState("");
+    const [localError, setLocalError] = useState<string | null>(null);
+    const [submitting, setSubmitting] = useState(false);
 
     const reset = useCallback(() => {
         setName("");
         setHint("");
         setTagsRaw("");
+        setLocalError(null);
     }, []);
 
     const handleSave = useCallback(() => {
@@ -40,13 +43,23 @@ export default function AddGroupModal({ visible, onClose }: AddGroupModalProps) 
             .split(",")
             .map((t) => t.trim())
             .filter(Boolean);
-        addGroup({
-            name: trimmed,
-            descriptionHint: hint.trim() || "Describe this group for the AI.",
-            tags: tags.length ? tags : undefined,
-        });
-        reset();
-        onClose();
+        setLocalError(null);
+        setSubmitting(true);
+        void (async () => {
+            try {
+                await addGroup({
+                    name: trimmed,
+                    descriptionHint: hint.trim() || "Describe this group for the AI.",
+                    tags: tags.length ? tags : undefined,
+                });
+                reset();
+                onClose();
+            } catch (e: unknown) {
+                setLocalError(e instanceof Error ? e.message : "Could not create group");
+            } finally {
+                setSubmitting(false);
+            }
+        })();
     }, [addGroup, hint, name, onClose, reset, tagsRaw]);
 
     const handleClose = useCallback(() => {
@@ -103,7 +116,10 @@ export default function AddGroupModal({ visible, onClose }: AddGroupModalProps) 
                         </Text>
                         <TextInput
                             value={name}
-                            onChangeText={setName}
+                            onChangeText={(t) => {
+                                setName(t);
+                                setLocalError(null);
+                            }}
                             placeholder='e.g. "The Boyz"'
                             placeholderTextColor={MUTED}
                             className="mt-1 rounded-xl border border-[#e0e0e0] bg-white px-3 py-2.5 font-josefin text-[14px] text-[#2c2c2c]"
@@ -138,19 +154,25 @@ export default function AddGroupModal({ visible, onClose }: AddGroupModalProps) 
                             className="mt-1 rounded-xl border border-[#e0e0e0] bg-white px-3 py-2.5 font-josefin text-[13px] text-[#2c2c2c]"
                         />
 
+                        {localError ? (
+                            <Text className="mt-3 font-josefin text-[12px] text-[#c45a00]">
+                                {localError}
+                            </Text>
+                        ) : null}
+
                         <TouchableOpacity
                             onPress={handleSave}
                             activeOpacity={0.9}
-                            disabled={!name.trim()}
+                            disabled={!name.trim() || submitting}
                             className="mt-5 flex-row items-center justify-center gap-2 rounded-2xl py-3.5"
                             style={{
                                 backgroundColor: ORANGE_CTA,
-                                opacity: name.trim() ? 1 : 0.45,
+                                opacity: name.trim() && !submitting ? 1 : 0.45,
                             }}
                         >
                             <FontAwesome name="check" size={15} color="#fff" />
                             <Text className="font-josefin-bold text-[14px] text-white">
-                                Create group
+                                {submitting ? "Creating…" : "Create group"}
                             </Text>
                         </TouchableOpacity>
                     </View>

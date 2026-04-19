@@ -1,24 +1,29 @@
 import type { MockGroup } from "@/constants/groupsMockData";
-import { MOCK_GROUPS } from "@/constants/groupsMockData";
+import {
+    addMemberToGroup,
+    createDiningGroup,
+    fetchMyGroups,
+    removeMemberFromGroup,
+    removeMemberFromGroupByUserId,
+    updateDiningGroupContext,
+    updateDiningGroupName,
+} from "@/lib/groupsApi";
+import { parseToE164 } from "@/lib/phone";
 import {
     createContext,
     useCallback,
     useContext,
+    useEffect,
     useMemo,
     useState,
     type ReactNode,
 } from "react";
 
-function cloneGroups(): MockGroup[] {
-    return MOCK_GROUPS.map((g) => ({
-        ...g,
-        phones: [...g.phones],
-        tags: g.tags ? [...g.tags] : [],
-    }));
-}
-
 export type GroupsSessionContextValue = {
     groups: MockGroup[];
+    groupsLoading: boolean;
+    groupsError: string | null;
+    refreshGroups: () => Promise<void>;
     currentGroupId: string;
     currentGroup: MockGroup | undefined;
     setCurrentGroupId: (id: string) => void;
@@ -26,10 +31,14 @@ export type GroupsSessionContextValue = {
         name: string;
         descriptionHint: string;
         tags?: string[];
-    }) => string;
-    addMemberPhone: (groupId: string, phone: string) => void;
-    removeMemberPhone: (groupId: string, phone: string) => void;
-    renameGroup: (groupId: string, name: string) => void;
+    }) => Promise<string>;
+    addMemberPhone: (groupId: string, phoneE164: string) => Promise<void>;
+    removeMemberPhone: (groupId: string, phoneE164: string) => Promise<void>;
+    renameGroup: (groupId: string, name: string) => Promise<void>;
+    updateGroupMeta: (
+        groupId: string,
+        input: { descriptionHint: string; tags?: string[] },
+    ) => Promise<void>;
 };
 
 const GroupsSessionContext = createContext<GroupsSessionContextValue | null>(
@@ -37,10 +46,34 @@ const GroupsSessionContext = createContext<GroupsSessionContextValue | null>(
 );
 
 export function GroupsSessionProvider({ children }: { children: ReactNode }) {
-    const [groups, setGroups] = useState<MockGroup[]>(cloneGroups);
-    const [currentGroupId, setCurrentGroupId] = useState<string>(
-        MOCK_GROUPS[0]?.id ?? "",
-    );
+    const [groups, setGroups] = useState<MockGroup[]>([]);
+    const [groupsLoading, setGroupsLoading] = useState(true);
+    const [groupsError, setGroupsError] = useState<string | null>(null);
+    const [currentGroupId, setCurrentGroupId] = useState<string>("");
+
+    const refreshGroups = useCallback(async () => {
+        setGroupsLoading(true);
+        setGroupsError(null);
+        try {
+            const rows = await fetchMyGroups();
+            setGroups(rows);
+            setCurrentGroupId((prev) => {
+                if (prev && rows.some((g) => g.id === prev)) {
+                    return prev;
+                }
+                return rows[0]?.id ?? "";
+            });
+        } catch (e: unknown) {
+            setGroupsError(e instanceof Error ? e.message : "Failed to load groups");
+            setGroups([]);
+        } finally {
+            setGroupsLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        void refreshGroups();
+    }, [refreshGroups]);
 
     const currentGroup = useMemo(
         () => groups.find((g) => g.id === currentGroupId),
@@ -48,72 +81,80 @@ export function GroupsSessionProvider({ children }: { children: ReactNode }) {
     );
 
     const addGroup = useCallback(
-        (input: { name: string; descriptionHint: string; tags?: string[] }) => {
-            const id = `g-${Date.now()}`;
-            const colors = ["#c4a574", "#8ab8d4", "#d48a8a", "#e8b44c"];
-            setGroups((prev) => {
-                const newGroup: MockGroup = {
-                    id,
-                    name: input.name.trim(),
-                    extraMembersLabel: "+ 0...",
-                    phones: [],
-                    avatarColors: [
-                        colors[prev.length % colors.length]!,
-                        "#a8a8a8",
-                    ],
-                    descriptionHint: input.descriptionHint.trim() || "New group",
-                    tags: input.tags?.length ? input.tags : ["General"],
-                };
-                return [...prev, newGroup];
-            });
+        async (input: {
+            name: string;
+            descriptionHint: string;
+            tags?: string[];
+        }) => {
+            const id = await createDiningGroup(input);
+            await refreshGroups();
             setCurrentGroupId(id);
             return id;
         },
-        [],
+        [refreshGroups],
     );
 
-    const addMemberPhone = useCallback((groupId: string, phone: string) => {
-        const trimmed = phone.trim();
-        if (!trimmed) return;
-        setGroups((prev) =>
-            prev.map((g) => {
-                if (g.id !== groupId) return g;
-                if (g.phones.includes(trimmed)) return g;
-                const phones = [...g.phones, trimmed];
-                return {
-                    ...g,
-                    phones,
-                    extraMembersLabel: `+ ${phones.length}...`,
-                };
-            }),
-        );
-    }, []);
+    const addMemberPhone = useCallback(
+        async (groupId: string, phoneE164: string) => {
+            await addMemberToGroup(groupId, phoneE164);
+            await refreshGroups();
+        },
+        [refreshGroups],
+    );
 
-    const removeMemberPhone = useCallback((groupId: string, phone: string) => {
-        setGroups((prev) =>
-            prev.map((g) => {
-                if (g.id !== groupId) return g;
-                const phones = g.phones.filter((p) => p !== phone);
-                return {
-                    ...g,
-                    phones,
-                    extraMembersLabel: `+ ${phones.length}...`,
-                };
-            }),
-        );
-    }, []);
+    const removeMemberPhone = useCallback(
+        async (groupId: string, phoneLabel: string) => {
+            const g = groups.find((x) => x.id === groupId);
+            const idx = g?.phones.findIndex((p) => p === phoneLabel) ?? -1;
+            const uid =
+                idx >= 0 && g?.memberUserIds && g.memberUserIds[idx]
+                    ? g.memberUserIds[idx]
+                    : undefined;
+            if (uid) {
+                await removeMemberFromGroupByUserId(groupId, uid);
+            } else {
+                const parsed = parseToE164(phoneLabel);
+                if (!parsed.ok) {
+                    throw new Error(
+                        "Cannot remove this row: open the group from the server after a refresh.",
+                    );
+                }
+                await removeMemberFromGroup(groupId, parsed.e164);
+            }
+            await refreshGroups();
+        },
+        [groups, refreshGroups],
+    );
 
-    const renameGroup = useCallback((groupId: string, name: string) => {
-        const trimmed = name.trim();
-        if (!trimmed) return;
-        setGroups((prev) =>
-            prev.map((g) => (g.id === groupId ? { ...g, name: trimmed } : g)),
-        );
-    }, []);
+    const renameGroup = useCallback(
+        async (groupId: string, name: string) => {
+            await updateDiningGroupName(groupId, name);
+            await refreshGroups();
+        },
+        [refreshGroups],
+    );
+
+    const updateGroupMeta = useCallback(
+        async (
+            groupId: string,
+            input: { descriptionHint: string; tags?: string[] },
+        ) => {
+            await updateDiningGroupContext(
+                groupId,
+                input.descriptionHint,
+                input.tags,
+            );
+            await refreshGroups();
+        },
+        [refreshGroups],
+    );
 
     const value = useMemo(
         () => ({
             groups,
+            groupsLoading,
+            groupsError,
+            refreshGroups,
             currentGroupId,
             currentGroup,
             setCurrentGroupId,
@@ -121,15 +162,20 @@ export function GroupsSessionProvider({ children }: { children: ReactNode }) {
             addMemberPhone,
             removeMemberPhone,
             renameGroup,
+            updateGroupMeta,
         }),
         [
             groups,
+            groupsLoading,
+            groupsError,
+            refreshGroups,
             currentGroupId,
             currentGroup,
             addGroup,
             addMemberPhone,
             removeMemberPhone,
             renameGroup,
+            updateGroupMeta,
         ],
     );
 

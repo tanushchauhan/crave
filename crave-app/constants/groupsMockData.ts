@@ -5,6 +5,8 @@ export type MockGroup = {
     name: string;
     extraMembersLabel: string;
     phones: GroupMemberPhone[];
+    /** Same order as `phones` when loaded from Supabase (for delete by user id). */
+    memberUserIds?: (string | undefined)[];
     avatarColors: string[];
     /** Short blurb for AI / description placeholder */
     descriptionHint: string;
