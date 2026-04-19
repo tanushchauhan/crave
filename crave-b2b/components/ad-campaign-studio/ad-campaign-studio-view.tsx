@@ -11,6 +11,7 @@ import {
   AD_MAX_INPUT_IMAGES,
 } from "@/lib/ad-campaign/constants";
 import type { AdGenerateResponse } from "@/lib/ad-campaign/types";
+import { cn } from "@/lib/utils";
 
 type UploadItem = { id: string; dataUrl: string };
 
@@ -162,10 +163,20 @@ export function AdCampaignStudioView() {
   return (
     <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-light font-sans">
       <div className="mx-auto w-full min-w-0 max-w-7xl flex-1 px-5 py-8 sm:px-8 sm:py-10 lg:px-10">
-        <h1 className="text-3xl font-bold tracking-tight text-dark sm:text-4xl">
+        <h1
+          className={cn(
+            "text-3xl font-bold tracking-tight text-dark sm:text-4xl",
+            "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-500 motion-safe:ease-out motion-safe:fill-mode-both",
+          )}
+        >
           Ad Campaign Studio
         </h1>
-        <p className="mt-4 max-w-3xl text-base leading-relaxed text-gray-dark sm:text-lg">
+        <p
+          className={cn(
+            "mt-4 max-w-3xl text-base leading-relaxed text-gray-dark sm:text-lg",
+            "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-500 motion-safe:ease-out motion-safe:delay-75 motion-safe:fill-mode-both",
+          )}
+        >
           Describe your campaign goals, tone, and target audience in the prompt
           box. Upload reference images to guide the visual style of your
           carousel. When you are ready, generate a cohesive multi-slide Instagram
@@ -174,14 +185,22 @@ export function AdCampaignStudioView() {
 
         {error ? (
           <p
-            className="mt-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900"
+            className={cn(
+              "mt-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900",
+              "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-300 motion-safe:ease-out",
+            )}
             role="alert"
           >
             {error}
           </p>
         ) : null}
 
-        <div className="mt-10 grid grid-cols-1 gap-8 lg:mt-12 lg:grid-cols-2 lg:gap-10">
+        <div
+          className={cn(
+            "mt-10 grid grid-cols-1 gap-8 lg:mt-12 lg:grid-cols-2 lg:gap-10",
+            "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-500 motion-safe:ease-out motion-safe:delay-100 motion-safe:fill-mode-both",
+          )}
+        >
           <section className="min-w-0">
             <h2 className="text-sm font-bold tracking-tight text-dark">Prompt Box</h2>
             <Textarea
@@ -276,12 +295,17 @@ export function AdCampaignStudioView() {
           </section>
         </div>
 
-        <div className="mt-10 lg:mt-12">
+        <div
+          className={cn(
+            "mt-10 lg:mt-12",
+            "motion-safe:animate-in motion-safe:fade-in motion-safe:duration-400 motion-safe:ease-out motion-safe:delay-150 motion-safe:fill-mode-both",
+          )}
+        >
           <button
             type="button"
             disabled={busy}
             onClick={() => void generate()}
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand py-4 text-center text-base font-bold text-white transition-colors hover:bg-brand/95 disabled:opacity-60 sm:text-lg"
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand py-4 text-center text-base font-bold text-white transition-[transform,colors,box-shadow] duration-200 ease-out hover:bg-brand/95 hover:shadow-md active:scale-[0.995] disabled:opacity-60 sm:text-lg motion-reduce:active:scale-100"
           >
             {busy ? (
               <>

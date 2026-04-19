@@ -92,8 +92,10 @@ export function AskCraveExperience({ initialPrompt = "" }: AskCraveExperiencePro
       {showChatLayer ? (
         <div
           className={cn(
-            "absolute inset-0 z-20 flex flex-col overflow-hidden bg-white transition-opacity duration-300 ease-out motion-reduce:transition-none",
-            revealChat ? "opacity-100" : "opacity-0",
+            "absolute inset-0 z-20 flex flex-col overflow-hidden bg-white transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none",
+            revealChat
+              ? "opacity-100 translate-y-0"
+              : "opacity-0 translate-y-1 motion-reduce:translate-y-0",
           )}
         >
           <CraveInChatView

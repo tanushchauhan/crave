@@ -30,6 +30,7 @@ export function CravePreChatView({ onStartChat }: CravePreChatViewProps) {
           <div
             className={cn(
               "relative h-28 w-56 transition-opacity duration-300 ease-out motion-reduce:transition-none sm:h-36 sm:w-72",
+              "motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-500 motion-safe:ease-out motion-safe:fill-mode-both",
               exiting && "pointer-events-none opacity-0",
             )}
           >
@@ -50,6 +51,7 @@ export function CravePreChatView({ onStartChat }: CravePreChatViewProps) {
           <div
             className={cn(
               "mt-8 w-full max-w-full transition-all duration-500 ease-in-out motion-reduce:transition-none sm:mt-10",
+              "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-500 motion-safe:ease-out motion-safe:delay-100 motion-safe:fill-mode-both",
               exiting &&
                 "translate-y-[min(52vh,28rem)] scale-[0.97] opacity-0 motion-reduce:translate-y-0 motion-reduce:scale-100 motion-reduce:opacity-100",
             )}
@@ -68,6 +70,7 @@ export function CravePreChatView({ onStartChat }: CravePreChatViewProps) {
         <section
           className={cn(
             "mt-8 flex min-h-0 flex-1 flex-col transition-opacity duration-300 ease-out motion-reduce:transition-none sm:mt-10",
+            "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-500 motion-safe:ease-out motion-safe:delay-150 motion-safe:fill-mode-both",
             exiting && "opacity-0",
           )}
         >
@@ -79,7 +82,7 @@ export function CravePreChatView({ onStartChat }: CravePreChatViewProps) {
               <li key={i}>
                 <button
                   type="button"
-                  className="w-full rounded-xl bg-light px-4 py-3.5 text-left text-sm text-dark transition-colors hover:bg-light/80 sm:text-base"
+                  className="w-full rounded-xl bg-light px-4 py-3.5 text-left text-sm text-dark transition-[transform,colors,box-shadow] duration-150 ease-out hover:bg-light/80 hover:shadow-sm active:scale-[0.99] sm:text-base motion-reduce:active:scale-100"
                 >
                   <span className="block truncate">{text}</span>
                 </button>

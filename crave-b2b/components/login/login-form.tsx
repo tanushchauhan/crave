@@ -7,6 +7,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 
 export function LoginForm() {
   const router = useRouter();
@@ -42,7 +43,12 @@ export function LoginForm() {
   }
 
   return (
-    <div className="w-full max-w-[400px] space-y-8">
+    <div
+      className={cn(
+        "w-full max-w-[400px] space-y-8",
+        "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-500 motion-safe:ease-out motion-safe:fill-mode-both",
+      )}
+    >
       <div className="space-y-3">
         <h1 className="text-4xl font-bold text-dark">Login</h1>
         <p className="text-md leading-relaxed text-gray-dark">

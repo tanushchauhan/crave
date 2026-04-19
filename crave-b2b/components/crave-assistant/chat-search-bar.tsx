@@ -108,6 +108,9 @@ export function ChatSearchBar({
       <div
         className={cn(
           "flex w-full min-w-0 max-w-full items-center gap-2 rounded-full border-2 border-brand bg-white px-3 py-2 shadow-[0_8px_28px_-8px_rgba(255,117,31,0.4)] sm:gap-3 sm:px-4 sm:py-2.5 md:gap-4 md:px-5",
+          "motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300 motion-safe:ease-out",
+          "transition-[box-shadow,transform,border-color] duration-200 ease-out motion-reduce:transition-none",
+          "focus-within:border-brand focus-within:shadow-[0_12px_36px_-10px_rgba(255,117,31,0.48)] motion-safe:focus-within:-translate-y-px",
           disabled && "pointer-events-none opacity-60",
         )}
         role="search"
@@ -129,7 +132,7 @@ export function ChatSearchBar({
           <button
             type="button"
             disabled={disabled}
-            className="rounded-full p-2 text-brand transition-colors hover:bg-brand/10 disabled:opacity-40"
+            className="rounded-full p-2 text-brand transition-[transform,colors] duration-150 ease-out hover:bg-brand/10 hover:scale-105 active:scale-95 disabled:opacity-40 motion-reduce:hover:scale-100 motion-reduce:active:scale-100"
             aria-label="Voice search (coming soon)"
           >
             <Mic className="size-5 sm:size-6" strokeWidth={2} />
@@ -138,7 +141,7 @@ export function ChatSearchBar({
             type="button"
             disabled={disabled || pending.length >= MAX_FILES}
             onClick={() => fileInputRef.current?.click()}
-            className="rounded-full p-2 text-brand transition-colors hover:bg-brand/10 disabled:opacity-40"
+            className="rounded-full p-2 text-brand transition-[transform,colors] duration-150 ease-out hover:bg-brand/10 hover:scale-105 active:scale-95 disabled:opacity-40 motion-reduce:hover:scale-100 motion-reduce:active:scale-100"
             aria-label="Attach images or PDF"
           >
             <Plus className="size-5 sm:size-6" strokeWidth={2} />
