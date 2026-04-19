@@ -28,3 +28,10 @@ export function slideSrc(img: AdGeneratedImage): string | null {
   }
   return null;
 }
+
+/** Normalize API hashtag strings for display (with leading #). */
+export function formatHashtagDisplay(tag: string): string {
+  const t = String(tag).trim();
+  if (!t) return "";
+  return t.startsWith("#") ? t : `#${t}`;
+}
