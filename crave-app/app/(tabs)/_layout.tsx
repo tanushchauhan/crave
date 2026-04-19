@@ -6,13 +6,19 @@ import { Tabs } from "expo-router";
 import React from "react";
 import { Dimensions, Image, View } from "react-native";
 
+/** Matches page dividers (`MainAppPageHeader` / cards) for one consistent chrome. */
+const HEADER_SEPARATOR = "#e5e5e5";
+
 function HeaderLogo() {
-    const w = Math.min(Math.round(Dimensions.get("window").width * 0.42), 168);
+    const winW = Dimensions.get("window").width;
+    /** Centered wordmark — wider + taller than before for stronger presence in the nav bar. */
+    const w = Math.min(Math.round(winW * 0.78), 340);
+    const h = Math.min(Math.round(w * 0.38), 100);
     return (
-        <View className="flex-row min-h-[44px] items-center justify-center px-2">
+        <View className="w-full flex-row items-center justify-center px-3 py-4">
             <Image
                 source={{ uri: CRAVE_LOGO_MARK }}
-                style={{ width: w, height: 44 }}
+                style={{ width: w, height: h }}
                 resizeMode="contain"
                 accessibilityIgnoresInvertColors
                 accessibilityLabel="Crave"
@@ -33,9 +39,17 @@ export default function TabLayout() {
                     headerShown: true,
                     headerTitleAlign: "center",
                     headerTitle: () => <HeaderLogo />,
+                    headerTitleContainerStyle: {
+                        paddingHorizontal: 0,
+                        paddingVertical: 0,
+                        alignItems: "center",
+                        justifyContent: "center",
+                    },
                     headerStyle: {
                         backgroundColor: "#ffffff",
-                        borderBottomWidth: 0,
+                        // Use a plain number — no `StyleSheet` import (avoids runtime errors in some bundles).
+                        borderBottomWidth: 1,
+                        borderBottomColor: HEADER_SEPARATOR,
                         shadowOpacity: 0,
                         elevation: 0,
                     },

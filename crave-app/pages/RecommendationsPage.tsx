@@ -3,7 +3,7 @@ import MainAppBottomNav, {
 } from "@/components/MainAppBottomNav";
 import AddGroupModal from "@/components/AddGroupModal";
 import OrderNowModal from "@/components/OrderNowModal";
-import RecommendationScreenHeader from "@/components/RecommendationScreenHeader";
+import MainAppPageHeader from "@/components/MainAppPageHeader";
 import RestaurantRecommendationCard from "@/components/RestaurantRecommendationCard";
 import VoiceAssistantFab from "@/components/VoiceAssistantFab";
 import { DEFAULT_RESTAURANT, type Restaurant } from "@/constants/orderingMockData";
@@ -126,7 +126,7 @@ export default function RecommendationsPage() {
     return (
         <SafeAreaView
             className="flex-1 bg-white"
-            edges={["top", "left", "right"]}
+            edges={["left", "right"]}
         >
             <AddGroupModal
                 visible={addGroupModalOpen}
@@ -146,7 +146,11 @@ export default function RecommendationsPage() {
                     }}
                     showsVerticalScrollIndicator
                 >
-                    <RecommendationScreenHeader />
+                    <MainAppPageHeader
+                        title="Recommendations For Today"
+                        align="center"
+                        contentInsetClassName="px-4"
+                    />
                     <RestaurantRecommendationCard
                         restaurant={DEFAULT_RESTAURANT}
                         onOrderPress={handleOrderPress}

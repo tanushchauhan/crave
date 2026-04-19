@@ -1,6 +1,7 @@
 import MainAppBottomNav, {
     type MainAppTabId,
 } from "@/components/MainAppBottomNav";
+import MainAppPageHeader from "@/components/MainAppPageHeader";
 import RipplePressable from "@/components/RipplePressable";
 import VoiceAssistantFab from "@/components/VoiceAssistantFab";
 import { useUserSettings } from "@/context/UserSettingsContext";
@@ -19,7 +20,6 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 const ORANGE = "#f5861f";
-const TITLE = "#ff751f";
 const MUTED = "#a6a6a6";
 const TRACK_OFF = "#d0d0d0";
 
@@ -55,26 +55,21 @@ export default function SettingsPage({
     return (
         <SafeAreaView
             className="flex-1 bg-[#f7f7f7]"
-            edges={["top", "left", "right"]}
+            edges={["left", "right"]}
         >
             <ScrollView
                 className="flex-1"
                 contentContainerStyle={{
                     paddingHorizontal: 16,
-                    paddingTop: 12,
+                    paddingTop: 0,
                     paddingBottom: insets.bottom + navHeight + 56,
                 }}
                 showsVerticalScrollIndicator={false}
             >
-                <Text
-                    className="font-josefin-bold text-[22px]"
-                    style={{ color: TITLE }}
-                >
-                    Settings
-                </Text>
-                <Text className="mt-1 font-josefin text-[12px] text-[#888]">
-                    Profile, Maple&apos;s notes, and what Crave can use on your device.
-                </Text>
+                <MainAppPageHeader
+                    title="Settings"
+                    subtitle="Profile, Maple's notes, and what Crave can use on your device."
+                />
 
                 <Text className="mt-6 font-josefin-bold text-[13px] text-[#444]">
                     Profile

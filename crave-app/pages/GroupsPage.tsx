@@ -3,6 +3,7 @@ import AddMemberModal from "@/components/AddMemberModal";
 import MainAppBottomNav, {
     type MainAppTabId,
 } from "@/components/MainAppBottomNav";
+import MainAppPageHeader from "@/components/MainAppPageHeader";
 import VoiceAssistantFab from "@/components/VoiceAssistantFab";
 import {
     collectGroupTags,
@@ -26,7 +27,6 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 const PAGE_BG = "#f4f4f4";
-const TITLE_ORANGE = "#ff904b";
 const MUTED = "#a6a6a6";
 const CARD_BG = "#5a5a5a";
 const ORANGE_CTA = "#f5861f";
@@ -175,28 +175,25 @@ export default function GroupsPage({
         <SafeAreaView
             className="flex-1"
             style={{ backgroundColor: PAGE_BG }}
-            edges={["top", "left", "right"]}
+            edges={["left", "right"]}
         >
             <ScrollView
                 className="flex-1"
                 contentContainerStyle={{
                     paddingBottom: insets.bottom + navHeight + 56,
                     paddingHorizontal: 16,
-                    paddingTop: 12,
+                    paddingTop: 0,
                 }}
                 showsVerticalScrollIndicator
             >
-                <View className="flex-row items-center gap-2">
-                    <View className="h-9 w-9 items-center justify-center rounded-full bg-[#fff3e7]">
-                        <Waffle width={26} height={28} />
-                    </View>
-                    <Text
-                        className="font-josefin-bold text-[18px]"
-                        style={{ color: TITLE_ORANGE }}
-                    >
-                        Groups
-                    </Text>
-                </View>
+                <MainAppPageHeader
+                    title="Groups"
+                    icon={
+                        <View className="h-9 w-9 items-center justify-center rounded-full bg-[#fff3e7]">
+                            <Waffle width={26} height={28} />
+                        </View>
+                    }
+                />
 
                 <View className="mt-3 flex-row items-center gap-2 rounded-2xl bg-white px-3 py-2.5">
                     <Search size={16} color={MUTED} strokeWidth={2} />
