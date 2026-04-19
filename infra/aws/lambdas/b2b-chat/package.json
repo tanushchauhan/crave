@@ -1,0 +1,11 @@
+{
+  "name": "crave-b2b-chat",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.758.0"
+  }
+}

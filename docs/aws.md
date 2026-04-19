@@ -349,13 +349,19 @@ aws lambda update-function-code --function-name crave-receipt-ocr --zip-file fil
 
 Keep **one** Lambda codebase with internal modules per route to stay within hackathon deploy complexity.
 
-### 6.3 Function: `ad-generate`
+### 6.3 Function: `b2b-chat`
+
+**Trigger:** API Gateway **`POST /b2b/chat`** (see [section 8.2](#82-example-routes)).
+
+**Behavior:** B2B dashboard **multimodal chat** — accepts an OpenAI-style **`messages`** array (client keeps history and sends the full thread each turn). **`user`** content may be a string or an array of parts: **`text`**, **`image_url`** (`data:image/...;base64,...`), **`file`** (PDF as base64 + filename). Maps to **Bedrock Converse** with model **`B2B_CHAT_MODEL_ID`** (defaults to **`BEDROCK_TEXT_MODEL_ID`** when unset; use Claude Sonnet 4 inference profile, e.g. `us.anthropic.claude-sonnet-4-20250514-v1:0`). Auth: **`Authorization: Bearer <B2B_CHAT_SECRET>`** (dashboard server or Next.js API route holds the secret; do not expose in browser if you require zero-trust). Response: single JSON **`chat.completion`** (non-streaming) for easy use with the OpenAI SDK pointed at this route.
+
+### 6.4 Function: `ad-generate`
 
 **Trigger:** API Gateway from B2B dashboard.
 
 **Behavior:** Bedrock image model → `PutObject` to `ASSETS_BUCKET` → return **CloudFront URL** or **presigned GET** URL; dashboard then saves row via Supabase `ad_assets`.
 
-### 6.4 Function: `remotion-render` (stretch)
+### 6.5 Function: `remotion-render` (stretch)
 
 **Trigger:** async invocation from `ad-generate` or SQS (if added).
 
@@ -429,6 +435,7 @@ echo "$API_ID"
 | POST | `/v1/chat/completions` | `bedrock-proxy`: OpenAI Chat Completions → Bedrock **Converse** (ElevenLabs Custom LLM); Bearer **`ELEVENLABS_CUSTOM_LLM_SECRET`** |
 | POST | `/v1/responses` | `bedrock-proxy`: OpenAI Responses API (`input`, `instructions`, …) → **Converse**; same Bearer; SSE uses **`event:`** lines per ElevenLabs |
 | POST | `/bedrock/converse` | `bedrock-proxy` (Claude / Nova / etc.) |
+| POST | `/b2b/chat` | **`crave-b2b-chat`**: OpenAI-style **`messages`** (text + optional image/PDF parts) → Bedrock **Converse**; Bearer **`B2B_CHAT_SECRET`**; model **`B2B_CHAT_MODEL_ID`** or **`BEDROCK_TEXT_MODEL_ID`** |
 | POST | `/voice/place-order` | `bedrock-proxy`: forwards body + JWT to Edge **`place-order`** — **`orders` / `order_items`** ([docs/plan.md](plan.md) section 2 feature 5, [docs/supabase.md](supabase.md) section 11) |
 | POST | `/voice/resolve-group` | `bedrock-proxy` → Edge **`resolve-group`** (group resolution for the voice agent) |
 | POST | `/voice/recommend` | `bedrock-proxy` → Edge **`recommend`** |

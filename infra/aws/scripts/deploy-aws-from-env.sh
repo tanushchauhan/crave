@@ -222,6 +222,24 @@ for k in (
 PY
 }
 
+write_b2b_chat_env() {
+  python3 <<'PY'
+import json, os, pathlib
+gen = pathlib.Path(os.environ["GEN"])
+default_model = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+mid = (
+    os.environ.get("B2B_CHAT_MODEL_ID")
+    or os.environ.get("BEDROCK_TEXT_MODEL_ID")
+    or default_model
+).strip()
+v = {"B2B_CHAT_MODEL_ID": mid}
+sec = (os.environ.get("B2B_CHAT_SECRET") or "").strip()
+if sec:
+    v["B2B_CHAT_SECRET"] = sec
+(gen / "lambda-env-b2b-chat.json").write_text(json.dumps({"Variables": v}, indent=2))
+PY
+}
+
 upsert_lambda() {
   local fn_name="$1"
   local zip_path="$2"
@@ -275,14 +293,17 @@ if [[ "$SKIP_LAMBDAS" -eq 0 ]]; then
   write_receipt_ocr_env
   write_bedrock_proxy_env
   write_ad_generate_env
+  write_b2b_chat_env
 
   zip_lambda receipt-ocr
   zip_lambda bedrock-proxy
   zip_lambda ad-generate
+  zip_lambda b2b-chat
 
   upsert_lambda crave-receipt-ocr "$AWS_ROOT/lambdas/receipt-ocr/function.zip" index.handler 1024 60 "$GEN/lambda-env-receipt-ocr.json"
   upsert_lambda crave-bedrock-proxy "$AWS_ROOT/lambdas/bedrock-proxy/function.zip" index.handler 512 30 "$GEN/lambda-env-bedrock-proxy.json"
   upsert_lambda crave-ad-generate "$AWS_ROOT/lambdas/ad-generate/function.zip" index.handler 1024 90 "$GEN/lambda-env-ad-generate.json"
+  upsert_lambda crave-b2b-chat "$AWS_ROOT/lambdas/b2b-chat/function.zip" index.handler 1024 60 "$GEN/lambda-env-b2b-chat.json"
 
   # Lambda function URL: HTTP API integrations are capped at 30s; function URL uses the Lambda timeout (e.g. 90s).
   echo "== Lambda function URL: crave-ad-generate =="
@@ -427,6 +448,30 @@ print(next((r['RouteId'] for r in d.get('Items',[]) if r.get('RouteKey')==k), ''
   upsert_route "POST /v1/responses"
   upsert_route "POST /bedrock/converse"
 
+  B2B_FN_ARN="$(aws lambda get-function --function-name crave-b2b-chat --query 'Configuration.FunctionArn' --output text 2>/dev/null || true)"
+  if [[ -n "$B2B_FN_ARN" && "$B2B_FN_ARN" != "None" ]]; then
+    B2B_INT="$(find_integration_id "$API_ID" "$B2B_FN_ARN")"
+    if [[ -z "$B2B_INT" ]]; then
+      B2B_INT="$(aws apigatewayv2 create-integration \
+        --api-id "$API_ID" \
+        --integration-type AWS_PROXY \
+        --integration-uri "$B2B_FN_ARN" \
+        --payload-format-version 2.0 \
+        --integration-method POST \
+        --query IntegrationId --output text)"
+    fi
+    rid="$(aws apigatewayv2 get-routes --api-id "$API_ID" --output json |
+      python3 -c "import json,sys; d=json.load(sys.stdin); \
+print(next((r['RouteId'] for r in d.get('Items',[]) if r.get('RouteKey')=='POST /b2b/chat'), ''))")"
+    if [[ -n "$rid" ]]; then
+      aws apigatewayv2 delete-route --api-id "$API_ID" --route-id "$rid" || true
+    fi
+    aws apigatewayv2 create-route \
+      --api-id "$API_ID" \
+      --route-key "POST /b2b/chat" \
+      --target "integrations/${B2B_INT}"
+  fi
+
   AD_FN_ARN="$(aws lambda get-function --function-name crave-ad-generate --query 'Configuration.FunctionArn' --output text 2>/dev/null || true)"
   if [[ -n "$AD_FN_ARN" && "$AD_FN_ARN" != "None" ]]; then
     AD_INT="$(find_integration_id "$API_ID" "$AD_FN_ARN")"
@@ -468,7 +513,7 @@ CORS
   echo "$INVOKE_URL" >"$GEN/http-api-endpoint.txt"
 
   # Allow API Gateway to invoke Lambdas
-  for fname in crave-bedrock-proxy crave-ad-generate; do
+  for fname in crave-bedrock-proxy crave-ad-generate crave-b2b-chat; do
     arn="$(aws lambda get-function --function-name "$fname" --query 'Configuration.FunctionArn' --output text 2>/dev/null || true)"
     [[ -z "$arn" || "$arn" == "None" ]] && continue
     aws lambda remove-permission --function-name "$fname" --statement-id "apigw-${API_ID}" 2>/dev/null || true
