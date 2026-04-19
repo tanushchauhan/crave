@@ -5,8 +5,9 @@
  * - SUPABASE_ANON_KEY — publishable key (apikey header for Edge invoke)
  * - PLACE_ORDER_URL, RESOLVE_GROUP_URL, RECOMMEND_URL, CONFIRM_BOOKING_URL — full Edge URLs
  *   (deploy script defaults them from SUPABASE_URL when unset)
- * - BEDROCK_TEXT_MODEL_ID (optional) — when /bedrock/converse or /v1/chat/completions is wired
- * - ELEVENLABS_CUSTOM_LLM_SECRET (optional) — Bearer token for POST /v1/chat/completions (ElevenLabs Custom LLM)
+ * - BEDROCK_TEXT_MODEL_ID (optional) — when /bedrock/converse or OpenAI shims are wired
+ * - ELEVENLABS_CUSTOM_LLM_SECRET (optional) — Bearer for POST /v1/chat/completions and POST /v1/responses (ElevenLabs Custom LLM).
+ *   OpenAI-style `tools` in the body are ignored (text-only Bedrock); ElevenLabs system tools still attach to requests.
  */
 
 import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
@@ -35,6 +36,16 @@ function parseBody(event) {
   } catch {
     return {};
   }
+}
+
+/** OpenAI/ElevenLabs use `max_tokens` / `max_output_tokens` of `-1` or `0` for "no limit"; Bedrock needs a positive cap. */
+function toBedrockMaxTokens(preferred, unsetDefault = 1024) {
+  const n =
+    typeof preferred === "number" && Number.isFinite(preferred)
+      ? preferred
+      : unsetDefault;
+  if (n <= 0) return 8192;
+  return Math.min(Math.max(1, Math.round(n)), 8192);
 }
 
 function response(statusCode, bodyObj, extraHeaders = {}) {
@@ -91,6 +102,9 @@ function openAiContentToBedrockBlocks(content) {
     if (part.type === "text" && typeof part.text === "string") {
       blocks.push({ text: part.text });
     }
+    if (part.type === "input_text" && typeof part.text === "string") {
+      blocks.push({ text: part.text });
+    }
     if (part.type === "image_url" || part.type === "input_image") {
       blocks.push({ text: "[User attached an image; describe or ask without relying on pixels here.]" });
     }
@@ -108,16 +122,15 @@ function openAiMessagesToBedrock(body) {
   const rest = [];
   for (const m of messages) {
     if (!m || typeof m.role !== "string") continue;
-    if (m.role === "system") {
+    if (m.role === "system" || m.role === "developer") {
       const c = m.content;
       systemParts.push(typeof c === "string" ? c : JSON.stringify(c ?? ""));
     } else {
       rest.push(m);
     }
   }
-  if (body.tools && Array.isArray(body.tools) && body.tools.length > 0) {
-    return { error: "tools_not_supported", message: "Use client tools for CRAVE; OpenAI shim is text-only." };
-  }
+  // ElevenLabs sends OpenAI-style `tools` (end_call, language_detection, …). Bedrock shim is text-only;
+  // ignore tools so the turn still gets a text completion instead of failing the whole agent.
   const system =
     systemParts.length > 0 ? [{ text: systemParts.join("\n\n") }] : undefined;
 
@@ -129,6 +142,54 @@ function openAiMessagesToBedrock(body) {
         error: "tool_role_not_supported",
         message: "OpenAI shim does not replay tool messages; use /bedrock/converse with native Bedrock messages.",
       };
+    }
+    const blocks = openAiContentToBedrockBlocks(m.content);
+    const last = bedrockMsgs[bedrockMsgs.length - 1];
+    if (last && last.role === role) {
+      last.content.push(...blocks);
+    } else {
+      bedrockMsgs.push({ role, content: blocks });
+    }
+  }
+  if (bedrockMsgs.length === 0) {
+    return { error: "no_conversation_messages" };
+  }
+  if (bedrockMsgs[0].role !== "user") {
+    bedrockMsgs.unshift({ role: "user", content: [{ text: "(Continue.)" }] });
+  }
+  return { system, messages: bedrockMsgs };
+}
+
+/** OpenAI Responses API `input` + `instructions` → Bedrock Converse (text-only). */
+function responsesInputToBedrock(body) {
+  const instructions =
+    typeof body.instructions === "string" ? body.instructions.trim() : "";
+  let input = body.input;
+  if (typeof input === "string") {
+    input = [{ role: "user", content: input }];
+  }
+  if (!Array.isArray(input)) {
+    return { error: "input_required", message: "input must be a string or array of messages." };
+  }
+  const systemParts = [];
+  if (instructions) systemParts.push(instructions);
+  const rest = [];
+  for (const m of input) {
+    if (!m || typeof m.role !== "string") continue;
+    if (m.role === "system" || m.role === "developer") {
+      const c = m.content;
+      systemParts.push(typeof c === "string" ? c : JSON.stringify(c ?? ""));
+    } else {
+      rest.push(m);
+    }
+  }
+  const system =
+    systemParts.length > 0 ? [{ text: systemParts.join("\n\n") }] : undefined;
+  const bedrockMsgs = [];
+  for (const m of rest) {
+    const role = m.role === "assistant" ? "assistant" : "user";
+    if (m.role === "tool" || m.role === "function") {
+      return { error: "tool_role_not_supported", message: "Unsupported role in input." };
     }
     const blocks = openAiContentToBedrockBlocks(m.content);
     const last = bedrockMsgs[bedrockMsgs.length - 1];
@@ -228,6 +289,67 @@ function sseOpenAiChatCompletion({
   return lines.join("");
 }
 
+/**
+ * OpenAI Responses API SSE — format required by ElevenLabs Custom LLM when using Responses.
+ * @see https://elevenlabs.io/docs/conversational-ai/customization/custom-llm
+ */
+function sseResponsesApiStream({ responseId, text }) {
+  // ElevenLabs docs: minimum events are `response.output_text.delta` + `response.completed` only
+  // (https://elevenlabs.io/docs/conversational-ai/customization/custom-llm — Responses API).
+  const delta =
+    text == null || String(text).length === 0 ? " " : String(text);
+  const lines = [];
+  lines.push(
+    `event: response.output_text.delta\ndata: ${JSON.stringify({
+      type: "response.output_text.delta",
+      delta,
+    })}\n\n`,
+  );
+  lines.push(
+    `event: response.completed\ndata: ${JSON.stringify({
+      type: "response.completed",
+      response: { id: responseId, status: "completed" },
+    })}\n\n`,
+  );
+  lines.push("data: [DONE]\n\n");
+  return lines.join("");
+}
+
+function sseResponsesApiError(message, code = "bedrock_error") {
+  return `event: error\ndata: ${JSON.stringify({
+    type: "error",
+    error: { message, code },
+  })}\n\ndata: [DONE]\n\n`;
+}
+
+/** Shared gate for ElevenLabs → Bedrock shims. */
+function checkElevenLabsCustomLlmAuth(authHeader) {
+  const modelId = process.env.BEDROCK_TEXT_MODEL_ID;
+  if (!modelId) {
+    return {
+      error: response(501, {
+        error: "bedrock_not_configured",
+        message: "Set BEDROCK_TEXT_MODEL_ID on crave-bedrock-proxy.",
+      }),
+    };
+  }
+  const llmSecret = process.env.ELEVENLABS_CUSTOM_LLM_SECRET;
+  if (!llmSecret) {
+    return {
+      error: response(503, {
+        error: "elevenlabs_custom_llm_not_configured",
+        message:
+          "Set ELEVENLABS_CUSTOM_LLM_SECRET on crave-bedrock-proxy to match ElevenLabs Custom LLM API key.",
+      }),
+    };
+  }
+  const token = bearerToken(authHeader);
+  if (token !== llmSecret) {
+    return { error: response(401, { error: "invalid_api_key" }) };
+  }
+  return { modelId };
+}
+
 async function forwardToSupabaseEdge(targetUrl, anonKey, authHeader, event) {
   const upstream = await fetch(targetUrl, {
     method: "POST",
@@ -287,27 +409,101 @@ export const handler = async (event) => {
     }
   }
 
+  // ElevenLabs Custom LLM: OpenAI Responses API POST …/v1/responses (SSE: response.output_text.delta + response.completed)
+  if (path.endsWith("/v1/responses")) {
+    const gate = checkElevenLabsCustomLlmAuth(auth);
+    if (gate.error) return gate.error;
+    const { modelId } = gate;
+
+    const body = parseBody(event);
+    const mapped = responsesInputToBedrock(body);
+    if (mapped.error) {
+      if (body.stream !== false) {
+        return responseSse(
+          sseResponsesApiError(
+            mapped.message || mapped.error || "bad_request",
+            String(mapped.error || "invalid_request_error"),
+          ),
+        );
+      }
+      return response(400, mapped);
+    }
+
+    const rawMaxTok =
+      typeof body.max_output_tokens === "number"
+        ? body.max_output_tokens
+        : typeof body.max_tokens === "number"
+          ? body.max_tokens
+          : undefined;
+    const maxTok = toBedrockMaxTokens(rawMaxTok, 1024);
+    const temp =
+      typeof body.temperature === "number" ? body.temperature : 0.3;
+
+    const client = new BedrockRuntimeClient({});
+    const cmd = new ConverseCommand({
+      modelId,
+      messages: mapped.messages,
+      ...(mapped.system ? { system: mapped.system } : {}),
+      inferenceConfig: {
+        maxTokens: maxTok,
+        temperature: Math.min(1, Math.max(0, temp)),
+      },
+    });
+
+    let out;
+    try {
+      out = await client.send(cmd);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (body.stream !== false) {
+        return responseSse(sseResponsesApiError(msg, "bedrock_error"));
+      }
+      return response(502, { error: "bedrock_error", message: msg });
+    }
+
+    const t = bedrockAssistantText(out.output);
+    const modelEcho =
+      typeof body.model === "string" && body.model.trim().length > 0
+        ? body.model.trim()
+        : modelId;
+    const created = Math.floor(Date.now() / 1000);
+    const responseId = `resp_${created}_${Math.random().toString(36).slice(2, 10)}`;
+    const u = out.usage || {};
+    const usage = {
+      input_tokens: u.inputTokens ?? 0,
+      output_tokens: u.outputTokens ?? 0,
+      total_tokens:
+        u.totalTokens ?? (u.inputTokens ?? 0) + (u.outputTokens ?? 0),
+    };
+
+    if (body.stream === false) {
+      return response(200, {
+        id: responseId,
+        object: "response",
+        created_at: created,
+        status: "completed",
+        model: modelEcho,
+        output: [
+          {
+            id: `msg_${Math.random().toString(36).slice(2, 12)}`,
+            type: "message",
+            status: "completed",
+            role: "assistant",
+            content: [{ type: "output_text", text: t }],
+          },
+        ],
+        usage,
+      });
+    }
+
+    return responseSse(sseResponsesApiStream({ responseId, text: t }));
+  }
+
   // ElevenLabs Custom LLM: OpenAI Chat Completions POST …/v1/chat/completions
   if (path.endsWith("/v1/chat/completions") || path.endsWith("/chat/completions")) {
-    const modelId = process.env.BEDROCK_TEXT_MODEL_ID;
-    const llmSecret = process.env.ELEVENLABS_CUSTOM_LLM_SECRET;
-    if (!modelId) {
-      return response(501, {
-        error: "bedrock_not_configured",
-        message: "Set BEDROCK_TEXT_MODEL_ID on crave-bedrock-proxy.",
-      });
-    }
-    if (!llmSecret) {
-      return response(503, {
-        error: "elevenlabs_custom_llm_not_configured",
-        message:
-          "Set ELEVENLABS_CUSTOM_LLM_SECRET on crave-bedrock-proxy to the same Bearer token configured in ElevenLabs Custom LLM.",
-      });
-    }
-    const token = bearerToken(auth);
-    if (token !== llmSecret) {
-      return response(401, { error: "invalid_api_key" });
-    }
+    const gate = checkElevenLabsCustomLlmAuth(auth);
+    if (gate.error) return gate.error;
+    const { modelId } = gate;
 
     const body = parseBody(event);
     const mapped = openAiMessagesToBedrock(body);
@@ -323,12 +519,13 @@ export const handler = async (event) => {
       return response(400, mapped);
     }
 
-    const maxTok =
+    const rawMaxTok =
       typeof body.max_tokens === "number"
         ? body.max_tokens
         : typeof body.max_completion_tokens === "number"
           ? body.max_completion_tokens
-          : 1024;
+          : undefined;
+    const maxTok = toBedrockMaxTokens(rawMaxTok, 1024);
     const temp =
       typeof body.temperature === "number" ? body.temperature : 0.3;
 
@@ -338,7 +535,7 @@ export const handler = async (event) => {
       messages: mapped.messages,
       ...(mapped.system ? { system: mapped.system } : {}),
       inferenceConfig: {
-        maxTokens: Math.min(Math.max(1, maxTok), 8192),
+        maxTokens: maxTok,
         temperature: Math.min(1, Math.max(0, temp)),
       },
     });

@@ -10,9 +10,9 @@ From the **repository root** (with AWS credentials + Supabase vars in `.env`):
 ./infra/aws/scripts/deploy-aws-from-env.sh
 ```
 
-This runs **`bootstrap.sh`** (S3 buckets, IAM role, `infra/aws/.generated/bootstrap.env`), renders **`policies/crave-lambda-inline.template.json`** into **`CraveBedrockAndS3`**, zips and **creates/updates** Lambdas **`crave-receipt-ocr`**, **`crave-bedrock-proxy`**, **`crave-ad-generate`**, wires **S3 → receipt-ocr**, and creates/updates HTTP API **`crave-http`** with routes **`POST /voice/place-order`**, **`POST /voice/resolve-group`**, **`POST /voice/recommend`**, **`POST /voice/confirm-booking`**, **`POST /v1/chat/completions`** (OpenAI-compatible shim for ElevenLabs Custom LLM → Bedrock), **`POST /bedrock/converse`**, **`POST /ads/generate`**. Flags: `--skip-iam`, `--skip-lambdas`, `--skip-api`, `--skip-s3`.
+This runs **`bootstrap.sh`** (S3 buckets, IAM role, `infra/aws/.generated/bootstrap.env`), renders **`policies/crave-lambda-inline.template.json`** into **`CraveBedrockAndS3`**, zips and **creates/updates** Lambdas **`crave-receipt-ocr`**, **`crave-bedrock-proxy`**, **`crave-ad-generate`**, wires **S3 → receipt-ocr**, and creates/updates HTTP API **`crave-http`** with routes **`POST /voice/place-order`**, **`POST /voice/resolve-group`**, **`POST /voice/recommend`**, **`POST /voice/confirm-booking`**, **`POST /v1/chat/completions`**, **`POST /v1/responses`** (OpenAI shims for ElevenLabs Custom LLM → Bedrock), **`POST /bedrock/converse`**, **`POST /ads/generate`**. Flags: `--skip-iam`, `--skip-lambdas`, `--skip-api`, `--skip-s3`.
 
-**`.env` keys used:** `AWS_*`, optional `CRAVE_TEAM_SLUG`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, `INTERNAL_HMAC_SECRET` or `CRAVE_INTERNAL_SECRET`, `MATCH_RECEIPT_EDGE_URL`, optional per-function Edge overrides **`PLACE_ORDER_URL`**, **`RESOLVE_GROUP_URL`**, **`RECOMMEND_URL`**, **`CONFIRM_BOOKING_URL`** (defaults: `{SUPABASE_URL}/functions/v1/{name}`), optional `RECEIPT_PARSE_MODEL_ID` (otherwise receipt OCR uses **`USE_STUB=true`**), **`BEDROCK_TEXT_MODEL_ID`** / **`AD_IMAGE_MODEL_ID`** for **`POST /ads/generate`** (Converse + Nova image; see `lambdas/ad-generate`), optional **`ELEVENLABS_CUSTOM_LLM_SECRET`** for **`POST /v1/chat/completions`**.
+**`.env` keys used:** `AWS_*`, optional `CRAVE_TEAM_SLUG`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, `INTERNAL_HMAC_SECRET` or `CRAVE_INTERNAL_SECRET`, `MATCH_RECEIPT_EDGE_URL`, optional per-function Edge overrides **`PLACE_ORDER_URL`**, **`RESOLVE_GROUP_URL`**, **`RECOMMEND_URL`**, **`CONFIRM_BOOKING_URL`** (defaults: `{SUPABASE_URL}/functions/v1/{name}`), optional `RECEIPT_PARSE_MODEL_ID` (otherwise receipt OCR uses **`USE_STUB=true`**), **`BEDROCK_TEXT_MODEL_ID`** / **`AD_IMAGE_MODEL_ID`** for **`POST /ads/generate`** (Converse + Nova image; see `lambdas/ad-generate`), optional **`ELEVENLABS_CUSTOM_LLM_SECRET`** for **`POST /v1/chat/completions`** and **`POST /v1/responses`** (Custom LLM URL must include **`/v1/…`**).
 
 Outputs: **`infra/aws/.generated/http-api-endpoint.txt`** (API Gateway base URL), rendered IAM + notification JSON (gitignored).
 
@@ -27,7 +27,7 @@ Outputs: **`infra/aws/.generated/http-api-endpoint.txt`** (API Gateway base URL)
 | `receipts-cors.example.json` | Optional CORS on receipts bucket (§5.5) |
 | `events/test-s3-receipt-event.example.json` | Sample payload for `aws lambda invoke` (§13) |
 | `lambdas/receipt-ocr/` | S3 trigger → Bedrock vision → Supabase REST → `match-receipt-items` Edge (§6.1) |
-| `lambdas/bedrock-proxy/` | HTTP API fan-out: `/voice/*` → Supabase Edge (`place-order`, `resolve-group`, `recommend`, `confirm-booking`); **`/v1/chat/completions`** (OpenAI shape for ElevenLabs Custom LLM); `/bedrock/converse` (§6.2) |
+| `lambdas/bedrock-proxy/` | HTTP API fan-out: `/voice/*` → Supabase Edge; **`/v1/chat/completions`** + **`/v1/responses`** (OpenAI shims for ElevenLabs Custom LLM); `/bedrock/converse` (§6.2) |
 | `lambdas/ad-generate/` | **`POST /ads/generate`** — 3 Instagram-style designs (caption + hashtags + ≤3 PNGs each) via Bedrock (§6.3) |
 
 ## Workshop / shared accounts (docs/aws.md §0.1)

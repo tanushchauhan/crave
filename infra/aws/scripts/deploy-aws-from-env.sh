@@ -424,6 +424,7 @@ print(next((r['RouteId'] for r in d.get('Items',[]) if r.get('RouteKey')==k), ''
   upsert_route "POST /voice/recommend"
   upsert_route "POST /voice/confirm-booking"
   upsert_route "POST /v1/chat/completions"
+  upsert_route "POST /v1/responses"
   upsert_route "POST /bedrock/converse"
 
   AD_FN_ARN="$(aws lambda get-function --function-name crave-ad-generate --query 'Configuration.FunctionArn' --output text 2>/dev/null || true)"
