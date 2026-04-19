@@ -2,7 +2,8 @@
  * CRAVE — API Gateway HTTP API → Bedrock + Supabase Edge fan-out (docs/aws.md §6.2, §8.2).
  *
  * Env:
- * - SUPABASE_ANON_KEY — publishable key (apikey header for Edge invoke)
+ * - SUPABASE_URL, SUPABASE_ANON_KEY — for POST /receipts/signed-url (auth/v1/user + bookings RLS check)
+ * - RECEIPTS_BUCKET — receipts S3 bucket (deploy sets from CRAVE_RECEIPTS_BUCKET)
  * - PLACE_ORDER_URL, RESOLVE_GROUP_URL, RECOMMEND_URL, CONFIRM_BOOKING_URL — full Edge URLs
  *   (deploy script defaults them from SUPABASE_URL when unset)
  * - BEDROCK_TEXT_MODEL_ID (optional) — when /bedrock/converse or OpenAI shims are wired
@@ -11,6 +12,11 @@
  */
 
 import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const cors = {
   "access-control-allow-origin": "*",
@@ -371,6 +377,125 @@ async function forwardToSupabaseEdge(targetUrl, anonKey, authHeader, event) {
   };
 }
 
+/**
+ * POST /receipts/signed-url — presigned S3 PUT for `receipts/{user_id}/{booking_id}.{ext}` (matches crave-receipt-ocr key parser).
+ * Body: { booking_id: uuid, content_type?: "image/jpeg"|"image/png"|"image/webp", include_get_url?: boolean, expires_in?: number (60–3600) }
+ */
+async function handleReceiptsSignedUrl(event) {
+  const supabaseUrl = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
+  const anon = process.env.SUPABASE_ANON_KEY;
+  const receiptsBucket = process.env.RECEIPTS_BUCKET;
+  if (!supabaseUrl || !anon) {
+    return response(500, { error: "missing_supabase_config" });
+  }
+  if (!receiptsBucket) {
+    return response(503, {
+      error: "receipts_bucket_not_configured",
+      message:
+        "Set RECEIPTS_BUCKET on crave-bedrock-proxy (deploy injects CRAVE_RECEIPTS_BUCKET from bootstrap).",
+    });
+  }
+
+  const authHeader = getHeader(event.headers, "authorization");
+  if (!authHeader) {
+    return response(401, { error: "missing_authorization" });
+  }
+
+  const body = parseBody(event);
+  const bookingId =
+    typeof body.booking_id === "string" ? body.booking_id.trim() : "";
+  if (!UUID_RE.test(bookingId)) {
+    return response(400, { error: "invalid_booking_id" });
+  }
+
+  const rawCt =
+    typeof body.content_type === "string"
+      ? body.content_type.trim().toLowerCase()
+      : "image/jpeg";
+  const ctToExt = new Map([
+    ["image/jpeg", "jpg"],
+    ["image/jpg", "jpg"],
+    ["image/png", "png"],
+    ["image/webp", "webp"],
+  ]);
+  if (!ctToExt.has(rawCt)) {
+    return response(400, {
+      error: "invalid_content_type",
+      allowed: ["image/jpeg", "image/png", "image/webp"],
+    });
+  }
+  const ext = ctToExt.get(rawCt);
+  const contentType = rawCt === "image/jpg" ? "image/jpeg" : rawCt;
+
+  let expiresIn = Number(body.expires_in);
+  if (!Number.isFinite(expiresIn)) expiresIn = 900;
+  expiresIn = Math.min(3600, Math.max(60, Math.round(expiresIn)));
+
+  const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    headers: { Authorization: authHeader, apikey: anon },
+  });
+  if (userRes.status === 401 || userRes.status === 403) {
+    return response(401, { error: "invalid_session" });
+  }
+  if (!userRes.ok) {
+    return response(502, {
+      error: "auth_lookup_failed",
+      status: userRes.status,
+    });
+  }
+  const sessionUser = await userRes.json();
+  const userId = sessionUser?.id;
+  if (!userId || !UUID_RE.test(String(userId))) {
+    return response(401, { error: "invalid_session" });
+  }
+
+  const bookingRes = await fetch(
+    `${supabaseUrl}/rest/v1/bookings?id=eq.${encodeURIComponent(bookingId)}&select=id`,
+    {
+      headers: {
+        Authorization: authHeader,
+        apikey: anon,
+        Accept: "application/json",
+      },
+    },
+  );
+  if (!bookingRes.ok) {
+    const detail = (await bookingRes.text()).slice(0, 300);
+    return response(502, { error: "booking_lookup_failed", detail });
+  }
+  const bookingRows = await bookingRes.json();
+  if (!Array.isArray(bookingRows) || bookingRows.length === 0) {
+    return response(403, {
+      error: "forbidden",
+      message: "Booking not found or no access.",
+    });
+  }
+
+  const key = `receipts/${userId}/${bookingId}.${ext}`;
+  const s3 = new S3Client({});
+  const putCmd = new PutObjectCommand({
+    Bucket: receiptsBucket,
+    Key: key,
+    ContentType: contentType,
+  });
+  const putUrl = await getSignedUrl(s3, putCmd, { expiresIn });
+
+  const out = {
+    put_url: putUrl,
+    bucket: receiptsBucket,
+    key,
+    expires_in: expiresIn,
+    headers: { "Content-Type": contentType },
+  };
+
+  if (body.include_get_url === true) {
+    const getCmd = new GetObjectCommand({ Bucket: receiptsBucket, Key: key });
+    out.get_url = await getSignedUrl(s3, getCmd, { expiresIn });
+  }
+
+  return response(200, out);
+}
+
 export const handler = async (event) => {
   const method =
     event.requestContext?.http?.method ?? event.httpMethod ?? "GET";
@@ -385,6 +510,10 @@ export const handler = async (event) => {
   }
 
   const auth = getHeader(event.headers, "authorization");
+
+  if (path.endsWith("/receipts/signed-url") || path === "/receipts/signed-url") {
+    return handleReceiptsSignedUrl(event);
+  }
 
   const anon = process.env.SUPABASE_ANON_KEY;
   const voiceRoutes = [

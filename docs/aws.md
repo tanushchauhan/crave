@@ -431,7 +431,7 @@ echo "$API_ID"
 
 | Method | Route | Integration target |
 |--------|-------|----------------------|
-| POST | `/receipts/signed-url` | Lambda: returns presigned PUT URL for mobile upload |
+| POST | `/receipts/signed-url` | **`crave-bedrock-proxy`**: validates Supabase user JWT + booking access (RLS), returns presigned **S3 PUT** for `receipts/{user_id}/{booking_id}.jpg` (or `.png` / `.webp`; see §6.1 key layout). Optional presigned **GET** when body `include_get_url: true`. |
 | POST | `/v1/chat/completions` | `bedrock-proxy`: OpenAI Chat Completions → Bedrock **Converse** (ElevenLabs Custom LLM); Bearer **`ELEVENLABS_CUSTOM_LLM_SECRET`** |
 | POST | `/v1/responses` | `bedrock-proxy`: OpenAI Responses API (`input`, `instructions`, …) → **Converse**; same Bearer; SSE uses **`event:`** lines per ElevenLabs |
 | POST | `/bedrock/converse` | `bedrock-proxy` (Claude / Nova / etc.) |
@@ -441,6 +441,8 @@ echo "$API_ID"
 | POST | `/voice/recommend` | `bedrock-proxy` → Edge **`recommend`** |
 | POST | `/voice/confirm-booking` | `bedrock-proxy` → Edge **`confirm-booking`** (partner **`bookings`** row, `source=partner_app`) |
 | POST | `/ads/generate` | `ad-generate` |
+
+**`POST /receipts/signed-url` (mobile):** Headers: **`Authorization: Bearer <Supabase access_token>`**, **`Content-Type: application/json`**. Body: **`booking_id`** (UUID) required; optional **`content_type`** (`image/jpeg` default, or `image/png`, `image/webp`); optional **`include_get_url`**; optional **`expires_in`** (seconds, clamped 60–3600, default 900). Response **`200`**: **`put_url`**, **`key`**, **`bucket`**, **`expires_in`**, **`headers`** (send the same **`Content-Type`** on the S3 **`PUT`**). Key layout **`receipts/<jwt_sub>/<booking_id>.<ext>`** matches **`crave-receipt-ocr`**. **`get_url`** is only returned when **`include_get_url`** is true (may **`404`** until after **`PUT`**).
 
 **ElevenLabs Custom LLM:** point the Custom LLM URL at the **full** path **`https://<api-id>.execute-api.<region>.amazonaws.com/v1/chat/completions`** or **`…/v1/responses`**. Routes are registered only under **`/v1/…`**; a URL that omits **`/v1`** (for example **`…amazonaws.com/responses`**) never hits the Lambda and returns API Gateway **`404`** with body **`{"message":"Not Found"}`**.
 
