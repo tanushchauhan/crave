@@ -4,7 +4,7 @@
 
 **An AI dining concierge.** Say *"dinner with the boys tonight"*, and a voice agent resolves who's in your group, reconciles what they all like, speaks back the top 3 restaurants and why, books the table, then splits the receipt from a photo.
 
-Built in 24 hours at **Hook 'Em Hacks (UT Austin)** by a team of 5. **Won Most Startup Ready and Best Use of Supabase.**
+Built in 24 hours at **Hook 'Em Hacks (UT Austin)** by a team of 4. **Won Most Startup Ready and Best Use of Supabase.**
 
 React Native (Expo) · Next.js 16 · Supabase (pgvector · Realtime · Edge Functions) · AWS Bedrock + Lambda · ElevenLabs
 
