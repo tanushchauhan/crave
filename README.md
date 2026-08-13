@@ -1,40 +1,120 @@
-# CRAVE — You Crave It. We Book It.
+# CRAVE: You Crave It. We Book It.
 
-![Build](https://img.shields.io/badge/build-in%20progress-yellow?style=flat-square)
-![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)
-![Hackathon](https://img.shields.io/badge/Hook%20'Em%20Hacks-UT%20Austin-orange?style=flat-square)
-![Tracks](https://img.shields.io/badge/tracks-Multimodal%20%7C%20Supabase%20%7C%20AWS%20%7C%20Startup%20Ready-blueviolet?style=flat-square)
+![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square) ![Most Startup Ready](https://img.shields.io/badge/%F0%9F%8F%86%20winner-Most%20Startup%20Ready-orange?style=flat-square) ![Best Use of Supabase](https://img.shields.io/badge/%F0%9F%8F%86%20winner-Best%20Use%20of%20Supabase-3ecf8e?style=flat-square)
 
-> **Hook 'Em Hacks @ UT Austin — 24-hour sprint**
-> Tracks: Multimodal Search & Generation · Best Use of Supabase · Best Use of AWS · Most Startup Ready
+**An AI dining concierge.** Say *"dinner with the boys tonight"*, and a voice agent resolves who's in your group, reconciles what they all like, speaks back the top 3 restaurants and why, books the table, then splits the receipt from a photo.
+
+Built in 24 hours at **Hook 'Em Hacks (UT Austin)** by a team of 5. **Won Most Startup Ready and Best Use of Supabase.**
+
+React Native (Expo) · Next.js 16 · Supabase (pgvector · Realtime · Edge Functions) · AWS Bedrock + Lambda · ElevenLabs
+
+<!--
+  The bare user-attachments URL below is what GitHub turns into an inline video player, so
+  keep it on a line by itself. To replace it: open a new issue ON THIS PUBLIC REPO, drag the
+  .mp4 in, SUBMIT the issue (the asset is only finalized when the comment is saved), then
+  copy the new URL and check `curl -sI <url>` returns 302 before pasting it here. Never
+  upload from a private repo: since May 2023 those assets require login plus repo access, so
+  anonymous readers get a broken player. A <video> tag does not work (GitHub strips it on
+  every host), and neither does committing an .mp4 (only GIFs render from the repo tree).
+-->
+
+https://github.com/user-attachments/assets/0194d7cf-7d29-4278-82b4-5685dcd87219
+
+<div align="center">
+  <sub>Group resolution → voice recommendations → live booking → receipt split → AI ad generation, on real devices.<br>
+  Not rendering? <b><a href="https://www.youtube.com/watch?v=Hr566DL5qE8">Watch the 2:47 demo on YouTube</a></b>.</sub>
+</div>
+
+---
+
+## Quickstart
+
+**Prerequisites:** Node 20+, npm, a [Supabase](https://supabase.com) project, and AWS credentials with Bedrock model access.
+
+```bash
+git clone https://github.com/tanushchauhan/crave && cd crave
+cp .env.example .env     # fill in SUPABASE_URL + SUPABASE_ANON_KEY at minimum
+```
+
+> **Env lives in the repo root**, not per-app. Both `crave-b2b` and `crave-app` read `../.env*`.
+> See [docs/client-env.md](docs/client-env.md). Without it the dashboard returns HTTP 500.
+
+**Restaurant dashboard** → [localhost:3000](http://localhost:3000)
+
+```bash
+cd crave-b2b && npm install && npm run dev
+```
+
+**Mobile app** on the iOS Simulator (web is not a supported target: the voice agent depends on
+native WebRTC, see [crave-app/README.md](crave-app/README.md))
+
+```bash
+cd crave-app && npm install && npx expo run:ios -d "iPhone 16"
+```
+
+Both apps sit behind auth and read live data, so they need a provisioned backend to show anything:
+
+| Step | Where |
+|---|---|
+| Apply the 33 SQL migrations + deploy 6 Edge Functions | [docs/supabase.md](docs/supabase.md) · `./scripts/supabase-deploy.sh` |
+| Deploy the 4 Lambdas, API Gateway, S3 triggers | [docs/aws.md](docs/aws.md) · `infra/aws/scripts/deploy-aws-from-env.sh` |
+| Seed demo restaurants, users, and embeddings | `cd tools/supabase-seed && npm install && npm run seed` |
+| Wire the Maple voice agent (ElevenLabs Custom LLM) | [maple-voice-agent/](maple-voice-agent/) · [docs/aws.md](docs/aws.md) |
 
 ---
 
 ## What is CRAVE?
 
-CRAVE is an **AI-powered dining concierge** that figures out where your group should eat — by actually understanding who's in the group, what they each like, and what the vibe is tonight.
-
-You say: *"I'm going out with the boys tonight."*
-CRAVE resolves your group from contacts, reconciles everyone's preferences, and speaks back the top 3 picks and why — all via a fully-duplex voice agent named **Maple**.
+CRAVE figures out where your group should eat, by actually understanding who's in the group, what they each like, and what the vibe is tonight.
 
 There are two sides to the product:
 
-- **Consumer mobile app** (React Native + Expo) — voice-first group dining assistant. Speak naturally, get personalized recommendations, book in-app, split the bill, and give instant feedback — all in one flow.
-- **Restaurant B2B dashboard** (Next.js) — AI chatbot for analytics, real-time bookings feed, menu management, KPI tracking, and a one-prompt AI ad campaign generator.
+- **Consumer mobile app** (React Native + Expo): voice-first group dining assistant. Speak naturally, get personalized recommendations, book in-app, split the bill, and give instant feedback, all in one flow.
+- **Restaurant B2B dashboard** (Next.js): AI chatbot for analytics, real-time bookings feed, menu management, KPI tracking, and a one-prompt AI ad campaign generator.
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Mobile app | React Native 0.81 + Expo 54 |
+| B2B dashboard | Next.js 16 + Tailwind CSS 4 + shadcn/ui |
+| Voice assistant | ElevenLabs Conversational AI (Custom LLM, "Maple") |
+| LLM reasoning | Amazon Bedrock: Claude Sonnet 4 (Converse API) |
+| Receipt / doc OCR | Amazon Bedrock: Claude Sonnet 4 (multimodal vision) |
+| Text embeddings | Amazon Bedrock: Titan Text Embeddings v1 (1536-d) |
+| Image generation | Amazon Bedrock: Nova Canvas / Stability SD3.5 |
+| Ad compositing | Satori → Resvg → Sharp (server-side PNG rendering) |
+| Database | Supabase Postgres + pgvector (HNSW indexes) |
+| Auth | Supabase Auth: phone OTP (consumer) + email/password (B2B) |
+| Realtime | Supabase Realtime (bookings · orders · menu_items · item_feedback) |
+| Edge compute | Supabase Edge Functions (Deno), 6 functions |
+| Server compute | AWS Lambda (Node.js 20 ES modules) + API Gateway |
+| Item matching | pg_trgm trigram + pgvector cosine (3-stage pipeline) |
+
+---
+
+## Four modalities, each load-bearing
+
+1. **Voice in → voice out**: ElevenLabs ↔ Bedrock Claude, via an OpenAI-compatible shim proxy
+2. **Text → vector → search**: query → 1536-d embedding → pgvector HNSW cosine over restaurants
+3. **Image → structure**: receipt photo → Bedrock vision → structured JSON → item matching
+4. **Text → image → composite**: prompt → Bedrock image gen → SVG overlay → composited PNG ad
 
 ---
 
 ## The Six Core Features
 
-### 1. Maple — Conversational Voice Agent
-Full-duplex voice powered by **ElevenLabs Conversational AI** with a **custom LLM backend** (Bedrock Claude Sonnet 4 via an OpenAI-compatible proxy). Maple handles the entire dining journey: onboarding, recommendations, menu clarification, order placement, and booking confirmation — all through natural speech.
+### 1. Maple: Conversational Voice Agent
+Full-duplex voice powered by **ElevenLabs Conversational AI** with a **custom LLM backend** (Bedrock Claude Sonnet 4 via an OpenAI-compatible proxy). Maple handles the entire dining journey: onboarding, recommendations, menu clarification, order placement, and booking confirmation, all through natural speech.
 
 The headline moment: say *"dinner with the boys"* → Maple resolves your group, fans out to the recommendation engine, and speaks back ranked picks with reasons.
 
 ### 2. Group Preference Reconciliation
-The defensible moat. Each user carries a **1536-d preference embedding** (Amazon Bedrock Titan Text). The `resolve-group` Edge function aggregates the group's embeddings into a weighted centroid, filters on hard dietary constraints, and biases the result by context tag (`"date night"` vs `"with the boys"` vs `"family dinner"`). pgvector HNSW cosine search ranks candidate restaurants against the group vector.
+Each user carries a **1536-d preference embedding** (Amazon Bedrock Titan Text). The `resolve-group` Edge function aggregates the group's embeddings into a weighted centroid, filters on hard dietary constraints, and biases the result by context tag (`"date night"` vs `"with the boys"` vs `"family dinner"`). pgvector HNSW cosine search ranks candidate restaurants against the group vector.
 
-### 3. B2B Chatbot — "Ask Crave!"
+### 3. B2B Chatbot: "Ask Crave!"
 Multimodal natural-language Q&A over restaurant analytics. Accepts text, images, and PDFs. *"How did my margherita pizza do last week?"* → Bedrock Claude Sonnet 4 answers with data pulled from the restaurant's analytics tables. Streaming responses. Embedded directly in the dashboard sidebar.
 
 ### 4. AI Ad Campaign Studio
@@ -61,6 +141,30 @@ Snap the receipt → items are parsed, matched, and split in seconds. Each swipe
 
 ---
 
+## How a Recommendation Is Produced
+
+![Flow](docs/flow.png)
+
+---
+
+## Bill Split + Feedback Pipeline
+
+<img src="docs/billsplitting.png" width="50%" />
+
+---
+
+## Full System Architecture
+
+![Full System Architecture](docs/fullsystemarchitecture.png)
+
+---
+
+## Supabase Schema (Key Tables)
+
+![Schema](docs/schema.png)
+
+---
+
 ## Repository Structure
 
 ```
@@ -74,89 +178,38 @@ crave/
 │       ├── b2b-chat/         # Multimodal B2B chat endpoint
 │       └── ad-generate/      # Ad design pipeline
 ├── supabase/
-│   ├── migrations/           # 35 ordered SQL migrations
+│   ├── migrations/           # 33 ordered SQL migrations
 │   └── functions/            # Deno Edge Functions
 │       ├── place-order/
 │       ├── confirm-booking/
 │       ├── recommend/
 │       ├── resolve-group/
+│       ├── generate-ad/
 │       └── match-receipt-items/
 ├── maple-voice-agent/        # Maple system prompt
 ├── scripts/                  # Deploy helpers
+├── tools/supabase-seed/      # Demo data seeder
 └── docs/                     # Architecture notes
 ```
 
 ---
 
-## How a Recommendation Is Produced
+## What's in the demo
 
-![Flow](https://raw.githubusercontent.com/tanushchauhan/crave/main/docs/flow.png)
+[The 2:47 video](https://www.youtube.com/watch?v=Hr566DL5qE8) runs the full loop on real devices:
 
----
-
-## Bill Split + Feedback Pipeline
-
-<img src="https://raw.githubusercontent.com/tanushchauhan/crave/main/docs/billsplitting.png"  max-width="50%" />
-
----
-
-## Full System Architecture
-
-![Full System Architecture](https://raw.githubusercontent.com/tanushchauhan/crave/main/docs/fullsystemarchitecture.png)
-
----
-
-## Supabase Schema (Key Tables)
-
-![Schema](https://raw.githubusercontent.com/tanushchauhan/crave/main/docs/schema.png)
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Mobile app | React Native 0.81 + Expo 54 |
-| B2B dashboard | Next.js 16 + Tailwind CSS 4 + shadcn/ui |
-| Voice assistant | ElevenLabs Conversational AI (Custom LLM — "Maple") |
-| LLM reasoning | Amazon Bedrock — Claude Sonnet 4 (Converse API) |
-| Receipt / doc OCR | Amazon Bedrock — Claude Sonnet 4 (multimodal vision) |
-| Text embeddings | Amazon Bedrock — Titan Text Embeddings v1 (1536-d) |
-| Image generation | Amazon Bedrock — Nova Canvas / Stability SD3.5 |
-| Ad compositing | Satori → Resvg → Sharp (server-side PNG rendering) |
-| Database | Supabase Postgres + pgvector (HNSW indexes) |
-| Auth | Supabase Auth — phone OTP (consumer) + email/password (B2B) |
-| Realtime | Supabase Realtime (bookings · orders · menu_items · item_feedback) |
-| Edge compute | Supabase Edge Functions (Deno) — 5 functions |
-| Server compute | AWS Lambda (Node.js 20 ES modules) + API Gateway |
-| Item matching | pg_trgm trigram + pgvector cosine (3-stage pipeline) |
-
----
-
-## Tracks We're Targeting
-
-**Multimodal Search & Generation** — four modalities load-bearing in production:
-1. Voice in → text → voice out (ElevenLabs ↔ Bedrock Claude via OpenAI-shim proxy)
-2. Text query → 1536-d vector → pgvector HNSW cosine restaurant search
-3. Receipt image → Bedrock vision → structured JSON → item matching
-4. Text prompt → Bedrock image generation → SVG overlay → composited PNG ad
-
-**Best Use of Supabase** — Postgres + pgvector + Auth + Realtime + Edge Functions + RLS + pg_trgm, all load-bearing. The live booking demo (consumer books → B2B dashboard pings in <500ms via Realtime WS) is the centrepiece. Preference embeddings live in Postgres and update via a trigger on every feedback swipe.
-
-**Best Use of AWS** — Bedrock anchors the entire AI layer: Claude Sonnet 4 for reasoning, vision OCR, chat, and ad copy; Titan for all text embeddings; Nova Canvas / SD3.5 for ad image generation. Lambda + API Gateway host all server-side logic; S3 + CloudFront serve receipts and ad assets.
-
-**Most Startup Ready** — two-sided network (consumers + restaurants), real monetisation path (restaurant SaaS + sponsored placements + data licensing), a preference graph moat that compounds with every swipe, and a demo that lands.
-
----
-
-## The Demo Sequence (3 minutes)
-
-1. User opens app, says *"Dinner with the boys tonight"*
-2. Maple speaks back the top 3 picks with reasons — Supabase `resolve-group` + `recommend` running live
+1. User opens the app, says *"Dinner with the boys tonight"*
+2. Maple speaks back the top 3 picks with reasons, from Supabase `resolve-group` + `recommend` running live
 3. User books at a CRAVE partner restaurant → B2B dashboard pings live on the adjacent laptop (Realtime)
 4. Post-meal: snap a receipt → OCR parses it → drag items to avatars → tip slider → Send → Venmo deep link fires on a second phone
-5. Swipe feedback cards appear → cut to Supabase showing `user.pref_embedding` numerically shift
+5. Swipe feedback cards appear → Supabase shows `user.pref_embedding` numerically shift
 6. Switch to B2B: *"How did my margherita pizza do last week?"* → Ask Crave! streams a response inline
-7. *"Make me an Instagram ad for our Wagyu burger"* → Ad Campaign Studio returns 3 composited PNGs in ~10 seconds
+7. *"Make me an Instagram ad for our Wagyu burger"* → Ad Campaign Studio returns 3 composited PNGs
 
-**The close:** *"The app just solved a real problem. The system just learned."*
+Every swipe of feedback moves the user's preference vector, so the next recommendation is better than the last.
+
+---
+
+## License
+
+[MIT](LICENSE) © 2026 Tanush Chauhan
