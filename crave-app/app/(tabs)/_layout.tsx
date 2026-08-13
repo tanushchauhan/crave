@@ -57,7 +57,6 @@ export default function TabLayout() {
                 }}
             >
                 <Tabs.Screen name="index" options={{ title: "" }} />
-                <Tabs.Screen name="two" options={{ title: "" }} />
             </Tabs>
         </GroupsSessionProvider>
     );
