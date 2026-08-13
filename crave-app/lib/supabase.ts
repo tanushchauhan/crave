@@ -2,6 +2,7 @@ import "react-native-url-polyfill/auto";
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
+import { Platform } from "react-native";
 import { createClient } from "@supabase/supabase-js";
 
 type Extra = {
@@ -54,7 +55,10 @@ const resolvedAnon = hasConfig
 
 export const supabase = createClient(resolvedUrl, resolvedAnon, {
     auth: {
-        storage: AsyncStorage,
+        // AsyncStorage touches `window` on web, which does not exist during Expo's
+        // static render pass — passing it there crashes `expo start --web` outright.
+        // Leaving it undefined lets supabase-js fall back to its own web storage.
+        storage: Platform.OS === "web" ? undefined : AsyncStorage,
         autoRefreshToken: hasConfig,
         persistSession: hasConfig,
         detectSessionInUrl: false,

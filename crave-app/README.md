@@ -22,7 +22,7 @@ See [docs/client-env.md](../docs/client-env.md) and hosted Supabase **Auth → P
 
 The home tab loads venues via **`supabase.functions.invoke('recommend')`**, which calls RPC **`recommend_restaurants_for_user`** and returns menus. The app requests **foreground location** once per load (see **`expo-location`** and **`NSLocationWhenInUseUsageDescription`** in `app.json`); if the user grants access, the invoke body includes **`lat`** / **`lng`** so Edge can filter by radius (see [docs/supabase.md](../docs/supabase.md) §11). If permission is denied, recommendations still load without geo.
 
-After **`supabase db push`**, redeploy Edge (`./scripts/supabase-deploy.sh` or `supabase functions deploy recommend`). Without seeded restaurants / embeddings, the list may be empty—use **`tools/supabase-seed`** (see [docs/supabase.md](../docs/supabase.md) §13).
+After **`supabase db push`**, redeploy Edge (`./scripts/supabase-deploy.sh` or `supabase functions deploy recommend`). Without seeded restaurants / embeddings, the list may be empty, so use **`tools/supabase-seed`** (see [docs/supabase.md](../docs/supabase.md) §13).
 
 ## Groups tab
 
@@ -42,11 +42,18 @@ Use **Xcode → Open Developer Tool → Simulator** first if the CLI fails to fo
 
 After the first successful `expo run:ios`, native folders `ios/` and `android/` are generated (gitignored here).
 
-## Web
+## Web is not a supported target
 
-```bash
-npx expo start --web
-```
+`npx expo start --web` bundles, but the app fails to render:
+`(0, _reactNative.requireNativeComponent) is not a function`.
+
+**`MapleAgentProvider`** wraps every route in [`app/_layout.tsx`](app/_layout.tsx), and
+**`@elevenlabs/react-native`** depends on **`@livekit/react-native-webrtc`**, which is
+native-only. Supporting web would mean stubbing the whole voice stack behind a
+`Platform.OS === "web"` boundary and aliasing LiveKit in
+[`metro.config.js`](metro.config.js), and the voice agent still would not work there.
+
+Use the iOS Simulator instead.
 
 ## Naming
 
