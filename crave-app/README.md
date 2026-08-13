@@ -16,7 +16,7 @@ For **phone OTP sign-in**, set at least **either** the `EXPO_PUBLIC_*` pair **or
 - `EXPO_PUBLIC_SUPABASE_URL` or `SUPABASE_URL`
 - `EXPO_PUBLIC_SUPABASE_ANON_KEY` or `SUPABASE_ANON_KEY`
 
-See [docs/client-env.md](../docs/client-env.md) and hosted Supabase **Auth → Phone** (and redirect URLs for your dev client).
+See [docs/client-env.md](../docs/client-env.md) and hosted Supabase **Auth**, then **Phone** (and redirect URLs for your dev client).
 
 ## Recommendations tab
 
@@ -38,7 +38,7 @@ The tab loads **`bookings`** with joins to **`restaurants`** and **`dining_group
 npx expo run:ios -d "iPhone 16"
 ```
 
-Use **Xcode → Open Developer Tool → Simulator** first if the CLI fails to focus the Simulator (some environments block `osascript` automation).
+Use **Xcode**, then **Open Developer Tool**, then **Simulator** first if the CLI fails to focus the Simulator (some environments block `osascript` automation).
 
 After the first successful `expo run:ios`, native folders `ios/` and `android/` are generated (gitignored here).
 

@@ -20,7 +20,7 @@ Open [http://localhost:3000](http://localhost:3000).
 You need at least `SUPABASE_URL` and `SUPABASE_ANON_KEY` (or the `NEXT_PUBLIC_*` equivalents)
 in the root `.env`. Without them every route throws
 `Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY` and `/` returns HTTP 500.
-`next.config.ts` copies `SUPABASE_*` → `NEXT_PUBLIC_*` when the latter are unset.
+`next.config.ts` copies `SUPABASE_*` into `NEXT_PUBLIC_*` when the latter are unset.
 
 `/` redirects to `/login`; sign-in is Supabase Auth email/password. Apply the migrations in
 [../supabase/migrations](../supabase/migrations) and register a restaurant account first.
