@@ -1,42 +1,52 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# crave-b2b: Restaurant Dashboard
+
+Next.js 16 dashboard for CRAVE partner restaurants: real-time bookings and orders feed,
+menu management, KPI tracking, the "Ask Crave!" multimodal analytics chatbot, and the
+AI Ad Campaign Studio. Part of the [CRAVE monorepo](../README.md).
 
 ## Getting Started
 
-Environment variables are loaded from the **monorepo root** `../.env*` (after Next’s default `crave-b2b/.env*`, root values **override**). Put shared secrets in the repo root `.env`.
-
-First, run the development server:
+Environment variables are loaded from the **monorepo root** `../.env*` (after Next's default
+`crave-b2b/.env*`, root values **override**). Put shared secrets in the repo root `.env`.
+See [../.env.example](../.env.example) and [../docs/client-env.md](../docs/client-env.md).
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+You need at least `SUPABASE_URL` and `SUPABASE_ANON_KEY` (or the `NEXT_PUBLIC_*` equivalents)
+in the root `.env`. Without them every route throws
+`Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY` and `/` returns HTTP 500.
+`next.config.ts` copies `SUPABASE_*` → `NEXT_PUBLIC_*` when the latter are unset.
 
-### Watchpack / `EINTR` on macOS
+`/` redirects to `/login`; sign-in is Supabase Auth email/password. Apply the migrations in
+[../supabase/migrations](../supabase/migrations) and register a restaurant account first.
+See [../docs/supabase.md](../docs/supabase.md).
 
-If you still see `Watchpack Error … EINTR` while watching paths under `~/Desktop`, the dev script sets **`WATCHPACK_POLLING=true`** so Watchpack uses polling instead of native `FSEvents` (fewer interrupts). If issues persist, try **`npm run dev:webpack`** (Webpack dev + the `watchOptions` in `next.config.ts`). The server can still work (`Ready`, `GET … 200`) even when those lines appear.
+## Routes
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Path | Purpose |
+|---|---|
+| `/login`, `/signup`, `/forgot-password` | Supabase Auth (email/password); signup registers the restaurant |
+| `/dashboard` | KPIs plus the live bookings + orders feed (Supabase Realtime) |
+| `/dashboard/menu` | Menu management and per-item performance |
+| `/dashboard/ask` | "Ask Crave!", multimodal analytics chat (text, images, PDFs) |
+| `/dashboard/ad-campaign-studio` | One-prompt ad generation via the `ad-generate` Lambda |
 
-## Learn More
+API routes live under `app/api/` (`b2b-chat`, `ad-campaign/generate`, `dashboard/live-rows`,
+`dashboard/menu-performance`) and proxy to Lambda so bearer secrets stay server-side.
 
-To learn more about Next.js, take a look at the following resources:
+## Watchpack / `EINTR` on macOS
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+If you see `Watchpack Error … EINTR` while watching paths under `~/Desktop`, run the dev server
+with polling instead of native `FSEvents`:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+WATCHPACK_POLLING=true npm run dev
+```
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Or try `npm run dev:webpack` (Webpack dev + the `watchOptions` in `next.config.ts`). The server
+usually still works (`Ready`, `GET … 200`) even when those lines appear.
