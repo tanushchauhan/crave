@@ -212,4 +212,4 @@ Every swipe of feedback moves the user's preference vector, so the next recommen
 
 ## License
 
-[MIT](LICENSE) © 2026 Tanush Chauhan
+[MIT](LICENSE) © 2026 The Crave Team
